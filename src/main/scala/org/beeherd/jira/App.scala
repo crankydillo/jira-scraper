@@ -1,4 +1,4 @@
-package org.beeherd.project.management.jira
+package org.beeherd.jira
 
 import scala.xml.XML
 
@@ -17,13 +17,35 @@ import org.apache.log4j.Logger
 import org.beeherd.cli.utils.Tablizer
 import org.beeherd.client.XmlResponse
 import org.beeherd.client.http._
-import org.beeherd.metrics.sonar._
-import org.beeherd.metrics.vcs.{
-  CommitterMetrics, SubversionMetrics
-}
+import org.beeherd.jira.rest._
 import org.joda.time.DateTime
 import org.rogach.scallop._
 import org.rogach.scallop.exceptions._
+
+object Tester {
+  def main(args: Array[String]): Unit = {
+    val jiraUrl = "https://issues.apache.org/jira"
+    val urlBase = jiraUrl + "/rest/api/2"
+
+    val (protocol, server, port, _) = HttpRequest.parseUrl(jiraUrl)
+
+    val apacheClient = ClientFactory.createClient
+    val client = new HttpClient(apacheClient)
+
+    try {
+      val issues = new JiraSearcher(client, urlBase).issues(
+        "timeSpent > 0 and updated < 2013-03-27"
+      )
+
+      println(issues(0))
+
+      val worklogs = new JiraWorklog(client).worklogs(issues(0))
+      println(worklogs(0))
+    } finally {
+      apacheClient.getConnectionManager.shutdown
+    }
+  }
+}
 
 class JiraApp
 
@@ -33,10 +55,9 @@ class JiraApp
  * used to identify Sonar projects, Sonar metrics can be displayed.
  */
 object JiraApp {
-  import net.liftweb.json.parse
+  import Formatters.fmt
 
   private val Log = Logger.getLogger(classOf[JiraApp])
-  private val DateFormat = "yyyy-MM-dd"
 
   def main(args: Array[String]): Unit = {
     val conf = new Conf(args)
@@ -78,58 +99,32 @@ object JiraApp {
       case _ => until.minusWeeks(2)
     }
 
-    def fmt(d: DateTime) = d.toString(DateFormat)
 
     apacheClient.addRequestInterceptor(new PreemptiveAuthInterceptor(), 0)
 
     val urlBase = jiraUrl + "/rest/api/2"
 
     try {
-      val resp = client.get(urlBase + "/search"
-        , Map(
-          "jql" -> ("labels=escalation and timeSpent > 0 and updatedDate >= " +
-               fmt(since) + " and updatedDate <= " + fmt(until))
-        )
-      )
-      val jsonStr = resp.content.get.toString
-
-      case class Result(maxResults: Int, issues: List[Issue])
-      case class Issue(key: String, self: String, fields: Field)
-      case class Field(
-        description: String
-        , created: DateTime
-        , updated: DateTime
-        , labels: List[String]
+      val issues = new JiraSearcher(client, urlBase).issues(
+        "labels=escalation and timeSpent > 0 and updatedDate >= " +
+          fmt(since) + " and updatedDate <= " + fmt(until)
       )
 
-      import net.liftweb.json.{NoTypeHints, Serialization}
-      import net.liftweb.json.Serialization.read
-      implicit val formats = Serialization.formats(NoTypeHints)
-      
-      val result = read[Result](jsonStr)
+      val worklogRetriever = new JiraWorklog(client)
 
-      case class Author(name: String, displayName: String)
-      case class WorkLog(author: Author, timeSpentSeconds: Long, created: DateTime)
-      case class WorkLogResult(worklogs: List[WorkLog])
-      case class IssueWithWorkLog(issue: Issue, workLog: Map[String, List[WorkLog]])
-
-      val issues = result.issues.map { issue => 
-        val issueUrl = issue.self
-        val workLogRes = read[WorkLogResult](
-          client.get(issueUrl + "/worklog").content.get.toString
-        )
+      val issuesWithWorkLogs = issues.map { issue => 
+        val worklogs = worklogRetriever.worklogs(issue)
 
         val prunedLogs = 
           conf.workers.get match {
             case Some(ws) if !ws.isEmpty => 
-              workLogRes.worklogs.filter { wl => ws.contains(wl.author.name) }
-            case _ => workLogRes.worklogs
+              worklogs.filter { wl => ws.contains(wl.author.name) }
+            case _ => worklogs
           }
- 
         IssueWithWorkLog(issue, prunedLogs.groupBy(_.author.name))
       }
 
-      val prunedIssues = issues.filter { i => !i.workLog.isEmpty }
+      val prunedIssues = issuesWithWorkLogs.filter { i => !i.workLog.isEmpty }
 
       def hours(seconds: Long) = "%.2f" format (seconds / 3600.0)
 
@@ -259,4 +254,10 @@ object JiraApp {
       }
     }
   }
+}
+
+object Formatters {
+  private val DateFormat = "yyyy-MM-dd"
+
+  def fmt(d: DateTime) = d.toString(DateFormat)
 }
