@@ -34,13 +34,15 @@ object Tester {
 
     try {
       val issues = new JiraSearcher(client, urlBase).issues(
-        "timeSpent > 0 and updated < 2013-03-27"
+        "timeSpent > 0 and updated > 2013-03-27"
       )
 
       println(issues(0))
 
+      /*
       val worklogs = new JiraWorklog(client).worklogs(issues(0))
       println(worklogs(0))
+      */
     } finally {
       apacheClient.getConnectionManager.shutdown
     }
