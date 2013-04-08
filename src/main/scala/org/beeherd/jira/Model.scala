@@ -1,8 +1,8 @@
-package org.beeherd.jira.rest
+package org.beeherd.jira
 
 import org.joda.time.DateTime
 
-case class Issue(key: String, self: String, fields: Field) {
+case class Issue(key: String, self: String, fields: Field, subtasks: List[Issue]) {
   def url = self
 }
 

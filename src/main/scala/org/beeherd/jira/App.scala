@@ -17,7 +17,6 @@ import org.apache.log4j.Logger
 import org.beeherd.cli.utils.Tablizer
 import org.beeherd.client.XmlResponse
 import org.beeherd.client.http._
-import org.beeherd.jira.rest._
 import org.joda.time.DateTime
 import org.rogach.scallop._
 import org.rogach.scallop.exceptions._
@@ -34,12 +33,15 @@ object Tester {
 
     try {
       val issues = new JiraSearcher(client, urlBase).issues(
-        "timeSpent > 0 and updated > 2013-03-27"
+        "timeSpent > 0 and updated < 2013-03-27"
       )
 
       println(issues(0))
 
       /*
+      val hasSub = issues.filter { i => !i.subtasks.isEmpty }
+      println(hasSub(0).subtasks(0))
+
       val worklogs = new JiraWorklog(client).worklogs(issues(0))
       println(worklogs(0))
       */
@@ -49,20 +51,46 @@ object Tester {
   }
 }
 
-class JiraApp
-
-/**
- * A CLI that uses a VCS client to determine what projects, represented by
- * paths, have changed over some period of time.  If the projects (paths) can be
- * used to identify Sonar projects, Sonar metrics can be displayed.
- */
+class JiraApp 
 object JiraApp {
-  import Formatters.fmt
+  val Log = Logger.getLogger(classOf[JiraApp])
 
-  private val Log = Logger.getLogger(classOf[JiraApp])
+  class Conf(arguments: Seq[String]) extends LazyScallopConf(arguments) {
+    version("JIRA Scraper 1.0-SNAPSHOT")
+    val jiraUrl = opt[String](
+      "server"
+      , short = 's'
+      , required = true
+      , descr = "JIRA URL."
+    )
+    val username = opt[String](
+      "user"
+      , descr = "JIRA user."
+    )
+    val password = opt[String](
+      "password"
+      , descr = "JIRA user password."
+    )
+    val since = opt[String](
+      "since"
+      , descr = "Start date for updated JIRAs before --until value. Format: yyyy-MM-dd"
+    )
+    val until = opt[String](
+      "until"
+      , noshort = true
+      , descr = "End date for updated JIRAs.  Format: yyyy-MM-dd"
+    )
+    val workers = opt[List[String]](
+      "workers"
+      , descr = "The workers for which to gather data."
+    )
 
-  def main(args: Array[String]): Unit = {
-    val conf = new Conf(args)
+    val passwordPrompt = toggle("pp", descrYes = "Prompt for password.")
+
+    mutuallyExclusive(password, passwordPrompt)
+  }
+
+  def initialize(conf: Conf): Unit = {
     conf.initialize {
       case Help(c) => conf.printHelp; System.exit(0)
       case Version => println("JIRA Stuff 1.0"); System.exit(0)
@@ -73,14 +101,50 @@ object JiraApp {
       }
       case ScallopException(m) => println(m); System.exit(1);
     }
+  }
 
+  def pwd(conf: Conf): Option[String] = {
+    // TODO Research the security implications of storing a password in a string
+    conf.password.get match {
+      case Some(p) => Some(p)
+      case _ =>
+        if (conf.passwordPrompt.isSupplied) {
+          Some(
+            new String(System.console.readPassword("%s", "Password: "))
+          )
+        } else {
+          None
+        }
+    }
+  }
+
+  class PreemptiveAuthInterceptor extends HttpRequestInterceptor {
+    def process(request: ApacheHttpRequest , context: HttpContext): Unit = {
+      val authState = context.getAttribute(
+        ClientContext.TARGET_AUTH_STATE).asInstanceOf[AuthState]
+
+      // If no auth scheme avaialble yet, try to initialize it
+      // preemptively
+      if (authState.getAuthScheme() == null) {
+        val credsProvider = context.getAttribute(
+          ClientContext.CREDS_PROVIDER).asInstanceOf[CredentialsProvider]
+        val targetHost = context.getAttribute(
+          ExecutionContext.HTTP_TARGET_HOST).asInstanceOf[HttpHost]
+        val creds = credsProvider.getCredentials(
+          new AuthScope(targetHost.getHostName, targetHost.getPort))
+        if (creds == null) 
+          throw new HttpException("No credentials for preemptive authentication");
+        authState.setAuthScheme(new BasicScheme);
+        authState.setCredentials(creds);
+      }
+    }
+  }
+
+  def useClient(conf: Conf, fn: (HttpClient, String) => Unit): Unit = {
     val jiraUrl = conf.jiraUrl.apply
-
     val (protocol, server, port, _) = HttpRequest.parseUrl(jiraUrl)
-
     val apacheClient = ClientFactory.createClient
     val client = new HttpClient(apacheClient)
-
     val password = pwd(conf)
 
     conf.username.get match {
@@ -92,23 +156,59 @@ object JiraApp {
       case _ => {}
     }
 
-    val until = conf.until.get match {
-      case Some(s) => DateTime.parse(s)
-      case _ => new DateTime
-    }
-    val since = conf.since.get match {
-      case Some(s) => DateTime.parse(s)
-      case _ => until.minusWeeks(2)
-    }
-
-
     apacheClient.addRequestInterceptor(new PreemptiveAuthInterceptor(), 0)
 
-    val urlBase = jiraUrl + "/rest/api/2"
-
     try {
+      fn(client, jiraUrl)
+    } catch {
+      case e: Exception => 
+        e.printStackTrace
+        Log.error("Exception", e)
+    } finally {
+      apacheClient.getConnectionManager.shutdown
+    }
+  }
+
+  def hours(seconds: Long) = "%.2f" format (seconds / 3600.0)
+
+  def prettyJson(json: String): String = {
+    import net.liftweb.json.Printer.pretty 
+    import net.liftweb.json._
+    pretty(render(parse(json)))
+  }
+}
+
+class EscalationWorklog
+
+/**
+ * A CLI that uses a VCS client to determine what projects, represented by
+ * paths, have changed over some period of time.  If the projects (paths) can be
+ * used to identify Sonar projects, Sonar metrics can be displayed.
+ */
+object EscalationWorklog {
+  import JiraApp._
+  import Formatters.fmt
+
+  private val Log = Logger.getLogger(classOf[EscalationWorklog])
+
+  def main(args: Array[String]): Unit = {
+    val conf = new Conf(args)
+    initialize(conf)
+
+    useClient(conf, (client: HttpClient, jiraUrl: String) => {
+      val urlBase = jiraUrl + "/rest/api/2"
+
+      val until = conf.until.get match {
+        case Some(s) => DateTime.parse(s)
+        case _ => new DateTime
+      }
+      val since = conf.since.get match {
+        case Some(s) => DateTime.parse(s)
+        case _ => until.minusWeeks(2)
+      }
+
       val issues = new JiraSearcher(client, urlBase).issues(
-        "labels=escalation and timeSpent > 0 and updatedDate >= " +
+        "labels = escalation and timeSpent > 0 and updatedDate >= " +
           fmt(since) + " and updatedDate <= " + fmt(until)
       )
 
@@ -128,7 +228,6 @@ object JiraApp {
 
       val prunedIssues = issuesWithWorkLogs.filter { i => !i.workLog.isEmpty }
 
-      def hours(seconds: Long) = "%.2f" format (seconds / 3600.0)
 
       val tablizer = new Tablizer("  ");
 
@@ -176,87 +275,55 @@ object JiraApp {
 
       println()
       println("Logged from " + fmt(since) + " until " + fmt(until))
-    } catch {
-      case e: Exception => 
-        Console.err.println(e.getMessage)
-        Log.error("Exception", e)
-    } finally {
-      apacheClient.getConnectionManager.shutdown
-    }
-  }
-
-  private def pwd(conf: Conf): Option[String] = {
-    // TODO Research the security implications of storing a password in a string
-    conf.password.get match {
-      case Some(p) => Some(p)
-      case _ =>
-        if (conf.passwordPrompt.isSupplied) {
-          Some(
-            new String(System.console.readPassword("%s", "Password: "))
-          )
-        } else {
-          None
-        }
-    }
-  }
-
-  private class Conf(arguments: Seq[String]) extends LazyScallopConf(arguments) {
-    version("JIRA Scraper 1.0-SNAPSHOT")
-    val jiraUrl = opt[String](
-      "server"
-      , short = 's'
-      , required = true
-      , descr = "JIRA URL."
-    )
-    val username = opt[String](
-      "user"
-      , descr = "JIRA user."
-    )
-    val password = opt[String](
-      "password"
-      , descr = "JIRA user password."
-    )
-    val since = opt[String](
-      "since"
-      , descr = "Start date for updated JIRAs before --until value. Format: yyyy-MM-dd"
-    )
-    val until = opt[String](
-      "until"
-      , noshort = true
-      , descr = "End date for updated JIRAs.  Format: yyyy-MM-dd"
-    )
-    val workers = opt[List[String]](
-      "workers"
-      , descr = "The workers for which to gather data."
-    )
-
-    val passwordPrompt = toggle("pp", descrYes = "Prompt for password.")
-
-    mutuallyExclusive(password, passwordPrompt)
-  }
-
-  private class PreemptiveAuthInterceptor extends HttpRequestInterceptor {
-    def process(request: ApacheHttpRequest , context: HttpContext): Unit = {
-      val authState = context.getAttribute(
-        ClientContext.TARGET_AUTH_STATE).asInstanceOf[AuthState]
-
-      // If no auth scheme avaialble yet, try to initialize it
-      // preemptively
-      if (authState.getAuthScheme() == null) {
-        val credsProvider = context.getAttribute(
-          ClientContext.CREDS_PROVIDER).asInstanceOf[CredentialsProvider]
-        val targetHost = context.getAttribute(
-          ExecutionContext.HTTP_TARGET_HOST).asInstanceOf[HttpHost]
-        val creds = credsProvider.getCredentials(
-          new AuthScope(targetHost.getHostName, targetHost.getPort))
-        if (creds == null) 
-          throw new HttpException("No credentials for preemptive authentication");
-        authState.setAuthScheme(new BasicScheme);
-        authState.setCredentials(creds);
-      }
-    }
+    })
   }
 }
+
+class SprintWorklog
+object SprintWorklog {
+  import JiraApp._
+  import Formatters.fmt
+
+  private val Log = Logger.getLogger(classOf[SprintWorklog])
+
+  def main(args: Array[String]): Unit = {
+    val conf = new Conf(args)
+    initialize(conf)
+
+    useClient(conf, (client: HttpClient, jiraUrl: String) => {
+      val urlBase = jiraUrl + "/rest/greenhopper/1.0"
+
+      val until = conf.until.get match {
+        case Some(s) => DateTime.parse(s)
+        case _ => new DateTime
+      }
+      val since = conf.since.get match {
+        case Some(s) => DateTime.parse(s)
+        case _ => until.minusWeeks(2)
+      }
+
+      val teamsResource = new GreenhopperTeams(client, urlBase)
+      val team = teamsResource.team("Connectivity")
+      println(team)
+
+      val sprintsResource = new GreenhopperSprints(client, urlBase)
+      val sprints = sprintsResource.sprints(team.get.id)
+      println(sprints(0))
+
+
+      val resp = client.get(
+        urlBase + "/rapid/charts/sprintreport"
+        , Map(
+            "rapidViewId" -> (team.get.id + "")
+            , "sprintId" -> (sprints(0).id + "")
+          )
+        )
+
+      println(prettyJson(resp.content.get.toString))
+    })
+  }
+}
+
 
 object Formatters {
   private val DateFormat = "yyyy-MM-dd"
