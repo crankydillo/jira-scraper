@@ -51,139 +51,11 @@ object Tester {
   }
 }
 
-class JiraApp 
-object JiraApp {
-  val Log = Logger.getLogger(classOf[JiraApp])
-
-  class Conf(arguments: Seq[String]) extends LazyScallopConf(arguments) {
-    version("JIRA Scraper 1.0-SNAPSHOT")
-    val jiraUrl = opt[String](
-      "server"
-      , short = 's'
-      , required = true
-      , descr = "JIRA URL."
-    )
-    val username = opt[String](
-      "user"
-      , descr = "JIRA user."
-    )
-    val password = opt[String](
-      "password"
-      , descr = "JIRA user password."
-    )
-    val since = opt[String](
-      "since"
-      , descr = "Start date for updated JIRAs before --until value. Format: yyyy-MM-dd"
-    )
-    val until = opt[String](
-      "until"
-      , noshort = true
-      , descr = "End date for updated JIRAs.  Format: yyyy-MM-dd"
-    )
-    val workers = opt[List[String]](
-      "workers"
-      , descr = "The workers for which to gather data."
-    )
-
-    val passwordPrompt = toggle("pp", descrYes = "Prompt for password.")
-
-    mutuallyExclusive(password, passwordPrompt)
-  }
-
-  def initialize(conf: Conf): Unit = {
-    conf.initialize {
-      case Help(c) => conf.printHelp; System.exit(0)
-      case Version => println("JIRA Stuff 1.0"); System.exit(0)
-      case RequiredOptionNotFound(o) => {
-        println(o + " is required."); 
-        println("Use --help for more information")
-        System.exit(1)
-      }
-      case ScallopException(m) => println(m); System.exit(1);
-    }
-  }
-
-  def pwd(conf: Conf): Option[String] = {
-    // TODO Research the security implications of storing a password in a string
-    conf.password.get match {
-      case Some(p) => Some(p)
-      case _ =>
-        if (conf.passwordPrompt.isSupplied) {
-          Some(
-            new String(System.console.readPassword("%s", "Password: "))
-          )
-        } else {
-          None
-        }
-    }
-  }
-
-  class PreemptiveAuthInterceptor extends HttpRequestInterceptor {
-    def process(request: ApacheHttpRequest , context: HttpContext): Unit = {
-      val authState = context.getAttribute(
-        ClientContext.TARGET_AUTH_STATE).asInstanceOf[AuthState]
-
-      // If no auth scheme avaialble yet, try to initialize it
-      // preemptively
-      if (authState.getAuthScheme() == null) {
-        val credsProvider = context.getAttribute(
-          ClientContext.CREDS_PROVIDER).asInstanceOf[CredentialsProvider]
-        val targetHost = context.getAttribute(
-          ExecutionContext.HTTP_TARGET_HOST).asInstanceOf[HttpHost]
-        val creds = credsProvider.getCredentials(
-          new AuthScope(targetHost.getHostName, targetHost.getPort))
-        if (creds == null) 
-          throw new HttpException("No credentials for preemptive authentication");
-        authState.setAuthScheme(new BasicScheme);
-        authState.setCredentials(creds);
-      }
-    }
-  }
-
-  def useClient(conf: Conf, fn: (HttpClient, String) => Unit): Unit = {
-    val jiraUrl = conf.jiraUrl.apply
-    val (protocol, server, port, _) = HttpRequest.parseUrl(jiraUrl)
-    val apacheClient = ClientFactory.createClient
-    val client = new HttpClient(apacheClient)
-    val password = pwd(conf)
-
-    conf.username.get match {
-      case Some(u) =>
-        apacheClient.getCredentialsProvider().setCredentials(
-          new AuthScope(server, port)
-          , new UsernamePasswordCredentials(u, password.get)
-        )
-      case _ => {}
-    }
-
-    apacheClient.addRequestInterceptor(new PreemptiveAuthInterceptor(), 0)
-
-    try {
-      fn(client, jiraUrl)
-    } catch {
-      case e: Exception => 
-        e.printStackTrace
-        Log.error("Exception", e)
-    } finally {
-      apacheClient.getConnectionManager.shutdown
-    }
-  }
-
-  def hours(seconds: Long) = "%.2f" format (seconds / 3600.0)
-
-  def prettyJson(json: String): String = {
-    import net.liftweb.json.Printer.pretty 
-    import net.liftweb.json._
-    pretty(render(parse(json)))
-  }
-}
-
 class EscalationWorklog
 
-/**
- * A CLI that uses a VCS client to determine what projects, represented by
- * paths, have changed over some period of time.  If the projects (paths) can be
- * used to identify Sonar projects, Sonar metrics can be displayed.
+/** 
+ * A CLI that displays how much work was logged on escalations.  Escalations
+ * are JIRAs that have the label, escalation.
  */
 object EscalationWorklog {
   import JiraApp._
@@ -280,6 +152,9 @@ object EscalationWorklog {
 }
 
 class SprintWorklog
+/** 
+ * A CLI that displays how much work was logged on Greenhopper spring JIRAs.
+ */
 object SprintWorklog {
   import JiraApp._
   import Formatters.fmt
@@ -321,6 +196,143 @@ object SprintWorklog {
 
       println(prettyJson(resp.content.get.toString))
     })
+  }
+}
+
+
+
+class JiraApp 
+
+/**
+ * Contains functions and classes used by the CLIs
+ */
+object JiraApp {
+  val Log = Logger.getLogger(classOf[JiraApp])
+
+  class Conf(arguments: Seq[String]) extends LazyScallopConf(arguments) {
+    version("JIRA Scraper 1.0-SNAPSHOT")
+    val jiraUrl = opt[String](
+      "server"
+      , short = 's'
+      , required = true
+      , descr = "JIRA URL."
+    )
+    val username = opt[String](
+      "user"
+      , descr = "JIRA user."
+    )
+    val password = opt[String](
+      "password"
+      , descr = "JIRA user password."
+    )
+    val since = opt[String](
+      "since"
+      , descr = "Start date for updated JIRAs before --until value. Format: yyyy-MM-dd"
+    )
+    val until = opt[String](
+      "until"
+      , noshort = true
+      , descr = "End date for updated JIRAs.  Format: yyyy-MM-dd"
+    )
+    val workers = opt[List[String]](
+      "workers"
+      , descr = "The workers for which to gather data."
+    )
+
+    val passwordPrompt = toggle("pp", descrYes = "Prompt for password.")
+
+    mutuallyExclusive(password, passwordPrompt)
+  }
+
+  def initialize(conf: Conf): Unit = {
+    conf.initialize {
+      case Help(c) => conf.printHelp; System.exit(0)
+      case Version => println("JIRA Stuff 1.0"); System.exit(0)
+      case RequiredOptionNotFound(o) => {
+        println(o + " is required."); 
+        println("Use --help for more information")
+        System.exit(1)
+      }
+      case ScallopException(m) => println(m); System.exit(1);
+    }
+  }
+
+  def pwd(conf: Conf): Option[String] = {
+    // TODO Research the security implications of storing a password in a string
+    conf.password.get match {
+      case Some(p) => Some(p)
+      case _ =>
+        if (conf.passwordPrompt.isSupplied) {
+          Some(
+            new String(System.console.readPassword("%s", "Password: "))
+          )
+        } else {
+          None
+        }
+    }
+  }
+
+  class PreemptiveAuthInterceptor extends HttpRequestInterceptor {
+    def process(request: ApacheHttpRequest , context: HttpContext): Unit = {
+      val authState = context.getAttribute(
+        ClientContext.TARGET_AUTH_STATE).asInstanceOf[AuthState]
+
+      // If no auth scheme avaialble yet, try to initialize it
+      // preemptively
+      if (authState.getAuthScheme() == null) {
+        val credsProvider = context.getAttribute(
+          ClientContext.CREDS_PROVIDER).asInstanceOf[CredentialsProvider]
+        val targetHost = context.getAttribute(
+          ExecutionContext.HTTP_TARGET_HOST).asInstanceOf[HttpHost]
+        val creds = credsProvider.getCredentials(
+          new AuthScope(targetHost.getHostName, targetHost.getPort))
+        if (creds == null) 
+          throw new HttpException("No credentials for preemptive authentication");
+        authState.setAuthScheme(new BasicScheme);
+        authState.setCredentials(creds);
+      }
+    }
+  }
+
+  def useClient(conf: Conf, fn: (HttpClient, String) => Unit): Unit = {
+    val jiraUrl = {
+      val tmp = conf.jiraUrl.apply
+      if (tmp.endsWith("/")) tmp.dropRight(1)
+      else tmp
+    }
+    val (protocol, server, port, _) = HttpRequest.parseUrl(jiraUrl)
+    val apacheClient = ClientFactory.createClient
+    val client = new HttpClient(apacheClient)
+    val password = pwd(conf)
+
+    conf.username.get match {
+      case Some(u) =>
+        apacheClient.getCredentialsProvider().setCredentials(
+          new AuthScope(server, port)
+          , new UsernamePasswordCredentials(u, password.get)
+        )
+      case _ => {}
+    }
+
+    apacheClient.addRequestInterceptor(new PreemptiveAuthInterceptor(), 0)
+
+    try {
+      fn(client, jiraUrl)
+    } catch {
+      case e: Exception => 
+        e.printStackTrace
+        Log.error("Exception", e)
+    } finally {
+      apacheClient.getConnectionManager.shutdown
+    }
+  }
+
+  def hours(seconds: Long) = "%.2f" format (seconds / 3600.0)
+
+  def prettyJson(json: String): String = {
+    import net.liftweb.json.Printer.pretty 
+    import net.liftweb.json._
+    pretty(render(parse(json)))
   }
 }
 
