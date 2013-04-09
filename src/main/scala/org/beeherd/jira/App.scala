@@ -2,18 +2,7 @@ package org.beeherd.jira
 
 import scala.xml.XML
 
-import org.apache.http.{
-  HttpException, HttpHost, HttpRequest => ApacheHttpRequest, HttpRequestInterceptor
-}
-import org.apache.http.auth._
-import org.apache.http.client.CredentialsProvider
-import org.apache.http.client.protocol.ClientContext
-import org.apache.http.impl.auth.BasicScheme
-import org.apache.http.protocol.{
-  ExecutionContext, HttpContext
-}
 import org.apache.log4j.Logger
-
 import org.beeherd.cli.utils.Tablizer
 import org.beeherd.client.XmlResponse
 import org.beeherd.client.http._
@@ -272,28 +261,6 @@ object JiraApp {
     }
   }
 
-  class PreemptiveAuthInterceptor extends HttpRequestInterceptor {
-    def process(request: ApacheHttpRequest , context: HttpContext): Unit = {
-      val authState = context.getAttribute(
-        ClientContext.TARGET_AUTH_STATE).asInstanceOf[AuthState]
-
-      // If no auth scheme avaialble yet, try to initialize it
-      // preemptively
-      if (authState.getAuthScheme() == null) {
-        val credsProvider = context.getAttribute(
-          ClientContext.CREDS_PROVIDER).asInstanceOf[CredentialsProvider]
-        val targetHost = context.getAttribute(
-          ExecutionContext.HTTP_TARGET_HOST).asInstanceOf[HttpHost]
-        val creds = credsProvider.getCredentials(
-          new AuthScope(targetHost.getHostName, targetHost.getPort))
-        if (creds == null) 
-          throw new HttpException("No credentials for preemptive authentication");
-        authState.setAuthScheme(new BasicScheme);
-        authState.setCredentials(creds);
-      }
-    }
-  }
-
   def useClient(conf: Conf, fn: (HttpClient, String) => Unit): Unit = {
     val jiraUrl = {
       val tmp = conf.jiraUrl.apply
@@ -301,20 +268,14 @@ object JiraApp {
       else tmp
     }
     val (protocol, server, port, _) = HttpRequest.parseUrl(jiraUrl)
-    val apacheClient = ClientFactory.createClient
-    val client = new HttpClient(apacheClient)
     val password = pwd(conf)
 
-    conf.username.get match {
-      case Some(u) =>
-        apacheClient.getCredentialsProvider().setCredentials(
-          new AuthScope(server, port)
-          , new UsernamePasswordCredentials(u, password.get)
-        )
-      case _ => {}
+    val apacheClient = conf.username.get match {
+      case Some(u) => ClientFactory.createClient(server, u, password.get, port, true)
+      case _ => ClientFactory.createClient
     }
 
-    apacheClient.addRequestInterceptor(new PreemptiveAuthInterceptor(), 0)
+    val client = new HttpClient(apacheClient)
 
     try {
       fn(client, jiraUrl)
