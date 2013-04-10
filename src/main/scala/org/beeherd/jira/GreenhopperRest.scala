@@ -7,6 +7,17 @@ import net.liftweb.json.Serialization.read
 object GreenhopperJsonResults {
   case class RapidViewList(views: List[Team])
   case class Sprints(sprints: List[Sprint])
+
+  // I'm not sure how to dig down without having all the classes..
+  case class SprintReportResp(contents: SRContent, sprint: SRSprint)
+  case class SRContent(completedIssues: List[SprintReportIssue])
+  case class SRSprint(
+    id: Long
+    , name: String
+    , startDate: Option[DateTime]
+    , endDate: Option[DateTime]
+    , completedDate: Option[DateTime]
+  )
 }
 
 /**
@@ -18,12 +29,10 @@ class GreenhopperTeams(
 ) extends RestResource {
   import GreenhopperJsonResults.RapidViewList
 
-  private val searchResourceUrl = jiraUrlBase + "/rapidviews/list"
+  private val baseUrl = jiraUrlBase + "/rapidviews/list"
 
-  def teams: List[Team] =
-    read[RapidViewList](
-      client.get(searchResourceUrl).content.get.toString
-    ).views
+  def teams: List[Team] = 
+    read[RapidViewList](json(client.get(baseUrl))).views
 
   def team(name: String): Option[Team] = teams.find { _.name == name }
 }
@@ -34,11 +43,34 @@ class GreenhopperSprints(
 ) extends RestResource {
   import GreenhopperJsonResults.Sprints
 
-  private val searchResourceUrl = jiraUrlBase + "/sprints"
+  private val baseUrl = jiraUrlBase + "/sprints"
 
   def sprints(teamId: Long): List[Sprint] =
-    read[Sprints](
-      client.get(searchResourceUrl + "/" + teamId).content.get.toString
-    ).sprints
+    read[Sprints](json(client.get(baseUrl + "/" + teamId))).sprints
 }
 
+case class GreenhopperSprintReport(
+  client: HttpClient
+  , jiraUrlBase: String // string?? base URL for jira REST api
+) extends RestResource {
+  import java.text.SimpleDateFormat
+  import net.liftweb.json.DefaultFormats
+  import net.liftweb.json.ext.JodaTimeSerializers
+  import GreenhopperJsonResults.SprintReportResp
+
+  implicit override val formats = new DefaultFormats {
+    override def dateFormatter = new SimpleDateFormat(
+      "dd/MMM/yy HH:mm a")
+  } ++ JodaTimeSerializers.all
+
+  private val baseUrl = jiraUrlBase + "/rapid/charts/sprintreport"
+
+  def sprintReport(teamId: Long, sprintId: Long): SprintReport = {
+    val params = Map("rapidViewId" -> (teamId + ""), "sprintId" -> (sprintId + ""))
+    val jsonStr = json(client.get(baseUrl, params))
+    println(JiraApp.prettyJson(jsonStr))
+    val srResp = read[SprintReportResp](jsonStr)
+    SprintReport(srResp.sprint.id, srResp.sprint.name, srResp.sprint.startDate, 
+      srResp.sprint.endDate, srResp.sprint.completedDate, srResp.contents.completedIssues)
+  }
+}

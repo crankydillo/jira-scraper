@@ -4,6 +4,9 @@ import java.text.SimpleDateFormat
 
 import org.joda.time.DateTime
 import org.beeherd.client.http.HttpClient
+import org.beeherd.client.{
+  Response, StringResponse
+}
 import net.liftweb.json.DefaultFormats
 import net.liftweb.json.Serialization.read
 import net.liftweb.json.ext.JodaTimeSerializers
@@ -18,6 +21,16 @@ trait RestResource {
     override def dateFormatter = new SimpleDateFormat(
       "yyyy-MM-dd'T'HH:mm:ss.SSSZ")
   } ++ JodaTimeSerializers.all
+
+  /**
+   * Extract JSON from the response or throw a runtime exception.
+   */
+  def json(resp: Response): String = {
+    resp match {
+      case StringResponse(s) => s
+      case _ => throw new RuntimeException("Unexpected HTTP response: " + resp)
+    }
+  }
 }
 
 /**

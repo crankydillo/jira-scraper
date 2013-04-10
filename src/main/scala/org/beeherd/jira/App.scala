@@ -52,8 +52,15 @@ object EscalationWorklog {
 
   private val Log = Logger.getLogger(classOf[EscalationWorklog])
 
+  class EscalationConf(args: Seq[String]) extends Conf(args) {
+    val workers = opt[List[String]](
+      "workers"
+      , descr = "The workers for which to gather data."
+    )
+  }
+
   def main(args: Array[String]): Unit = {
-    val conf = new Conf(args)
+    val conf = new EscalationConf(args)
     initialize(conf)
 
     useClient(conf, (client: HttpClient, jiraUrl: String) => {
@@ -88,7 +95,6 @@ object EscalationWorklog {
       }
 
       val prunedIssues = issuesWithWorkLogs.filter { i => !i.workLog.isEmpty }
-
 
       val tablizer = new Tablizer("  ");
 
@@ -150,8 +156,15 @@ object SprintWorklog {
 
   private val Log = Logger.getLogger(classOf[SprintWorklog])
 
+  class SprintConf(args: Seq[String]) extends Conf(args) {
+    val team = opt[String](
+      "team"
+      , required = true
+    )
+  }
+
   def main(args: Array[String]): Unit = {
-    val conf = new Conf(args)
+    val conf = new SprintConf(args)
     initialize(conf)
 
     useClient(conf, (client: HttpClient, jiraUrl: String) => {
@@ -167,14 +180,27 @@ object SprintWorklog {
       }
 
       val teamsResource = new GreenhopperTeams(client, urlBase)
-      val team = teamsResource.team("Connectivity")
+      val teamName = conf.team.apply
+      val team = teamsResource.team(teamName)
+
+      team match {
+        case Some(t) =>
+        case _ =>
+          println("The team, " + teamName + ", was not found.")
+          System.exit(1)
+      }
+
       println(team)
 
       val sprintsResource = new GreenhopperSprints(client, urlBase)
       val sprints = sprintsResource.sprints(team.get.id)
       println(sprints(0))
 
+      val sprintReportResource = new GreenhopperSprintReport(client, urlBase)
+      val sprintReport = sprintReportResource.sprintReport(team.get.id, sprints(0).id)
 
+      println(sprintReport)
+      /*
       val resp = client.get(
         urlBase + "/rapid/charts/sprintreport"
         , Map(
@@ -184,11 +210,10 @@ object SprintWorklog {
         )
 
       println(prettyJson(resp.content.get.toString))
+      */
     })
   }
 }
-
-
 
 class JiraApp 
 
@@ -223,11 +248,6 @@ object JiraApp {
       , noshort = true
       , descr = "End date for updated JIRAs.  Format: yyyy-MM-dd"
     )
-    val workers = opt[List[String]](
-      "workers"
-      , descr = "The workers for which to gather data."
-    )
-
     val passwordPrompt = toggle("pp", descrYes = "Prompt for password.")
 
     mutuallyExclusive(password, passwordPrompt)
