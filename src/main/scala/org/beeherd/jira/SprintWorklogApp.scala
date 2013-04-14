@@ -10,6 +10,22 @@ import org.joda.time.{
 import org.beeherd.jira.model._
 import org.beeherd.jira.rest._
 
+case class SprintsReport(
+  reports: List[SprintReport]
+)
+
+case class SprintReport(
+  name: String
+  , startDate: DateTime
+  , endDate: DateTime
+  , userWorklogs: Map[String, WorklogSummary]
+)
+
+case class WorklogSummary(
+  totalSeconds: Long
+  , totalStorySeconds: Long
+)
+
 object SprintReporter {
   val Log = Logger.getLogger(classOf[SprintReporter])
 }
@@ -21,14 +37,13 @@ class SprintReporter(
   , sprintReportResource: GreenhopperSprintReport
   , worklogRetriever: JiraWorklog
   , issueRetriever: JiraIssue
-  , tablizer: Tablizer = new Tablizer("  ")
 ) {
   import SprintReporter.Log
   import JiraApp.{
     fmt, hours
   }
 
-  def report(teamName: String) {
+  def reports(teamName: String): Stream[SprintReport] = {
     val team = teamsResource.team(teamName)
 
     team match {
@@ -39,31 +54,21 @@ class SprintReporter(
 
     val sprints = sprintsResource.sprints(team.get.id)
 
-    sprints.foreach { sprint => 
+    sprints.toStream.map { sprint => 
       try {
-        sprintReport(team.get.id, sprint)
+        Some(sprintReport(team.get.id, sprint))
       } catch {
         case e: Exception =>
           Log.error(e)
           println("There was a problem retrieving the sprint report for " +
-            "sprint " + sprint.id);
+            "sprint " + sprint.id)
+          None
       }
-      println()
-    }
+    }.flatten
   }
 
-  def sprintReport(teamId: Long, sprint: Sprint): Unit = {
+  def sprintReport(teamId: Long, sprint: Sprint): SprintReport = {
     val sprintReport = sprintReportResource.sprintReport(teamId, sprint.id)
-
-    println(sprint.name)
-    println("-" * sprint.name.size)
-
-    tablizer.tablize(
-      List(List("Start:", fmt(sprintReport.startDate.get))) ++
-      List(List("End:", fmt(sprintReport.endDate.get)))
-    ).foreach { r => println(r.mkString) }
-
-    println()
 
     val allIssues = 
       sprintReport
@@ -92,41 +97,19 @@ class SprintReporter(
       .foreach { println }
     }
 
-    val totals = 
+    val worklogSummaries = 
       logsByUser
       .toList
-      .sortBy { case (n, _) => n }
       .map { case (n, ls) => (n, ls.groupBy { _._3 }) }  // group by issuetype
       .map { case (n, ls) => 
         val storySecs = ls.getOrElse("story", Nil).map { _._2.timeSpentSeconds }.sum
         val totalSecs = ls.flatMap( _._2).map { _._2.timeSpentSeconds }.sum
         val percentStories = "%.2f" format (storySecs * 100.0 / totalSecs)
-        (n, totalSecs, storySecs)
-      }
+        (n -> WorklogSummary(totalSecs, storySecs))
+      }.toMap
 
-     // Could just iterate once...
-    val total = totals.map { _._2 }.sum
-    val totalStory = totals.map { _._3 }.sum
-    val totalPercentStory = "%.2f" format (totalStory * 100.0 / total)
-    val totalStr = hours(total)
-    val totalStoryStr = hours(totalStory)
-    val totalPercentStoryStr = totalPercentStory + ""
-
-    val headers = List("Worker", "Total Hours", "Story Hours", "% Story Work")
-  
-    val dataRows = totals.map { case(n, totSecs, storySecs) => 
-      List(n, hours(totSecs), hours(storySecs), 
-        "%.2f" format (storySecs * 100.0 / totSecs))
-    }
-
-    val separatorRow = List(List("------", "-" * totalStr.size, 
-      "-" * totalStoryStr.size, "-" * totalPercentStoryStr.size))
-
-    val totalRow = List(List("TOTALS", totalStr, totalStoryStr, totalPercentStoryStr))
-
-    val rows = tablizer.tablize(dataRows ++ separatorRow ++ totalRow, headers)
-
-    rows.foreach { r => println(r.mkString) }
+    SprintReport(sprint.name, sprintReport.startDate.get, sprintReport.endDate.get,
+      worklogSummaries)
   }
 }
 
@@ -174,8 +157,50 @@ object SprintWorklogApp {
       val tablizer = new Tablizer("  ")
 
       try {
-        new SprintReporter(urlBase, teamsResource, sprintsResource, sprintReportResource,
-          worklogRetriever, issueRetriever, tablizer).report(teamName)
+        val reporter = new SprintReporter(urlBase, teamsResource, 
+          sprintsResource, sprintReportResource, worklogRetriever, issueRetriever)
+
+        reporter.reports(teamName).foreach { report =>
+          println(report.name)
+          println("-" * report.name.size)
+
+          tablizer.tablize(
+            List(List("Start:", fmt(report.startDate))) ++
+            List(List("End:", fmt(report.endDate)))
+          ).foreach { r => println(r.mkString) }
+
+          println()
+
+          val totals = 
+            report.userWorklogs
+            .toList
+            .sortBy { _._1 }
+
+          val total = totals.map { _._2.totalSeconds }.sum
+          val totalStory = totals.map { _._2.totalStorySeconds }.sum
+          val totalPercentStory = "%.2f" format (totalStory * 100.0 / total)
+          val totalStr = hours(total)
+          val totalStoryStr = hours(totalStory)
+          val totalPercentStoryStr = totalPercentStory + ""
+
+          val headers = List("Worker", "Total Hours", "Story Hours", "% Story Work")
+        
+          val dataRows = totals.map { case(n, WorklogSummary(totSecs, storySecs)) => 
+            List(n, hours(totSecs), hours(storySecs), 
+              "%.2f" format (storySecs * 100.0 / totSecs))
+          }
+
+          val separatorRow = List(List("------", "-" * totalStr.size, 
+            "-" * totalStoryStr.size, "-" * totalPercentStoryStr.size))
+
+          val totalRow = List(List("TOTALS", totalStr, totalStoryStr, totalPercentStoryStr))
+
+          val rows = tablizer.tablize(dataRows ++ separatorRow ++ totalRow, headers)
+
+          rows.foreach { r => println(r.mkString) }
+
+          println()
+        }
       } catch {
         case e: Exception =>
           Log.error(e)
