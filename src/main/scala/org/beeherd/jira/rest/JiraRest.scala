@@ -1,4 +1,4 @@
-package org.beeherd.jira
+package org.beeherd.jira.rest
 
 import java.text.SimpleDateFormat
 
@@ -10,6 +10,9 @@ import org.beeherd.client.{
 import net.liftweb.json.DefaultFormats
 import net.liftweb.json.Serialization.read
 import net.liftweb.json.ext.JodaTimeSerializers
+
+import org.beeherd.jira.model._
+import org.beeherd.jira.JiraApp
 
 object JsonResults {
   case class SearchResult(maxResults: Int, issues: List[Issue])

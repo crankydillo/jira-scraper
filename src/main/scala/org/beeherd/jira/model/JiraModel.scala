@@ -1,4 +1,4 @@
-package org.beeherd.jira
+package org.beeherd.jira.model
 
 import org.joda.time.DateTime
 

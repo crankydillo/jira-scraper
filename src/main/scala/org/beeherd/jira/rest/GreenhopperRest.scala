@@ -1,8 +1,10 @@
-package org.beeherd.jira
+package org.beeherd.jira.rest
 
 import org.joda.time.DateTime
 import org.beeherd.client.http.HttpClient
 import net.liftweb.json.Serialization.read
+
+import org.beeherd.jira.model._
 
 object GreenhopperJsonResults {
   case class RapidViewList(views: List[Team])
