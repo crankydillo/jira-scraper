@@ -10,7 +10,11 @@ object GreenhopperJsonResults {
 
   // I'm not sure how to dig down without having all the classes..
   case class SprintReportResp(contents: SRContent, sprint: SRSprint)
-  case class SRContent(completedIssues: List[SprintReportIssue])
+  case class SRContent(
+    completedIssues: List[SprintReportIssue]
+    , incompletedIssues: List[SprintReportIssue]
+    , puntedIssues: List[SprintReportIssue]
+  )
   case class SRSprint(
     id: Long
     , name: String
@@ -68,9 +72,16 @@ case class GreenhopperSprintReport(
   def sprintReport(teamId: Long, sprintId: Long): SprintReport = {
     val params = Map("rapidViewId" -> (teamId + ""), "sprintId" -> (sprintId + ""))
     val jsonStr = json(client.get(baseUrl, params))
-    println(JiraApp.prettyJson(jsonStr))
     val srResp = read[SprintReportResp](jsonStr)
-    SprintReport(srResp.sprint.id, srResp.sprint.name, srResp.sprint.startDate, 
-      srResp.sprint.endDate, srResp.sprint.completedDate, srResp.contents.completedIssues)
+    val c = srResp.contents
+    val issues = c.completedIssues ++ c.incompletedIssues ++ c.puntedIssues
+    SprintReport(
+      srResp.sprint.id
+      , srResp.sprint.name
+      , srResp.sprint.startDate
+      , srResp.sprint.endDate
+      , srResp.sprint.completedDate
+      , issues
+    )
   }
 }

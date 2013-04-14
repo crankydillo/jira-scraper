@@ -6,7 +6,9 @@ import org.apache.log4j.Logger
 import org.beeherd.cli.utils.Tablizer
 import org.beeherd.client.XmlResponse
 import org.beeherd.client.http._
-import org.joda.time.DateTime
+import org.joda.time.{
+  DateTime, Interval
+}
 import org.rogach.scallop._
 import org.rogach.scallop.exceptions._
 
@@ -26,6 +28,7 @@ object Tester {
       )
 
       println(issues(0))
+      println(issues(0).fields.issuetype.name)
 
       /*
       val hasSub = issues.filter { i => !i.subtasks.isEmpty }
@@ -48,7 +51,7 @@ class EscalationWorklog
  */
 object EscalationWorklog {
   import JiraApp._
-  import Formatters.fmt
+  import RestFormatters.{ fmt => restFmt }
 
   private val Log = Logger.getLogger(classOf[EscalationWorklog])
 
@@ -77,10 +80,10 @@ object EscalationWorklog {
 
       val issues = new JiraSearcher(client, urlBase).issues(
         "labels = escalation and timeSpent > 0 and updatedDate >= " +
-          fmt(since) + " and updatedDate <= " + fmt(until)
+          restFmt(since) + " and updatedDate <= " + restFmt(until)
       )
 
-      val worklogRetriever = new JiraWorklog(client)
+      val worklogRetriever = new JiraWorklog(client, urlBase)
 
       val issuesWithWorkLogs = issues.map { issue => 
         val worklogs = worklogRetriever.worklogs(issue)
@@ -152,7 +155,6 @@ class SprintWorklog
  */
 object SprintWorklog {
   import JiraApp._
-  import Formatters.fmt
 
   private val Log = Logger.getLogger(classOf[SprintWorklog])
 
@@ -190,27 +192,102 @@ object SprintWorklog {
           System.exit(1)
       }
 
-      println(team)
-
       val sprintsResource = new GreenhopperSprints(client, urlBase)
       val sprints = sprintsResource.sprints(team.get.id)
-      println(sprints(0))
 
       val sprintReportResource = new GreenhopperSprintReport(client, urlBase)
-      val sprintReport = sprintReportResource.sprintReport(team.get.id, sprints(0).id)
+      val jiraRestUrl = jiraUrl + "/rest/api/2"
+      val worklogRetriever = new JiraWorklog(client, jiraRestUrl)
+      val issueRetriever = new JiraIssue(client, jiraRestUrl)
+      val tablizer = new Tablizer("  ")
 
-      println(sprintReport)
-      /*
-      val resp = client.get(
-        urlBase + "/rapid/charts/sprintreport"
-        , Map(
-            "rapidViewId" -> (team.get.id + "")
-            , "sprintId" -> (sprints(0).id + "")
-          )
-        )
+      sprints.foreach { sprint =>
+        val sprintReport = sprintReportResource.sprintReport(team.get.id, sprint.id)
 
-      println(prettyJson(resp.content.get.toString))
-      */
+        println(sprint.name)
+        println("-" * sprint.name.size)
+
+        tablizer.tablize(
+          List(List("Start:", fmt(sprintReport.startDate.get))) ++
+            List(List("End:", fmt(sprintReport.endDate.get)))
+        ).foreach { r => println(r.mkString) }
+
+        println()
+
+        val allIssues = 
+          sprintReport
+          .issues
+          .map { i => issueRetriever.issue(i.key) }
+          .flatMap { i => 
+            (i.key, i.issueType) :: i.subtasks.map { s => (s.id, i.issueType.toLowerCase) } 
+          }
+
+        val sprintInterval = 
+          new Interval(sprintReport.startDate.get, sprintReport.endDate.get)
+
+        val logsByUser =
+          allIssues
+          .flatMap { case (id, itype) => 
+            worklogRetriever.worklogs(id).map { l => (id, l, itype) } 
+          }
+          .filter { case (id, wl, itype) => sprintInterval.contains(wl.created) }
+          .groupBy { case (id, wls, itype) => wls.author.name }
+
+        if (Log.isDebugEnabled) {
+          logsByUser
+          .toList
+          .flatMap { _._2 }
+          .sortWith { (a, b) => a._2.created.isBefore(b._2.created) }
+          .foreach { println }
+        }
+
+        val totals = 
+          logsByUser
+          .toList
+          .sortBy { case (n, _) => n }
+          .map { case (n, ls) => (n, ls.groupBy { _._3 }) }  // group by issuetype
+          .map { case (n, ls) => 
+            val storySecs = ls.getOrElse("story", Nil).map { _._2.timeSpentSeconds }.sum
+            val totalSecs = ls.flatMap( _._2).map { _._2.timeSpentSeconds }.sum
+            val percentStories = "%.2f" format (storySecs * 100.0 / totalSecs)
+            //List(n, hours(totalSecs), percentStories)
+            (n, totalSecs, storySecs)
+          }
+
+          /*
+          .map { case (n, ls) =>
+                (n, ls.foldLeft (0L) { (sum, l) => sum + l._2.timeSpentSeconds }) 
+          }.map { case (name, total) => List(name, hours(total)) }
+          */
+
+         // Could just iterate once...
+        val total = totals.map { _._2 }.sum
+        val totalStory = totals.map { _._3 }.sum
+        val totalPercentStory = "%.2f" format (totalStory * 100.0 / total)
+
+        val totalStr = hours(total)
+        val totalStoryStr = hours(totalStory)
+        val totalPercentStoryStr = totalPercentStory + ""
+
+        val headers = List("Worker", "Total Hours", "Story Hours", "% Story Work")
+      
+        val dataRows = totals.map { case(n, totSecs, storySecs) => 
+          List(n, hours(totSecs), hours(storySecs), 
+            "%.2f" format (storySecs * 100.0 / totSecs))
+        }
+
+        val separatorRow = List(List("------", "-" * totalStr.size, 
+          "-" * totalStoryStr.size, "-" * totalPercentStoryStr.size))
+
+        val totalRow = List(List("TOTALS", totalStr, totalStoryStr, totalPercentStoryStr))
+
+        val rows = tablizer.tablize(dataRows ++ separatorRow ++ totalRow, headers)
+
+        rows.foreach { r => println(r.mkString) }
+        println()
+      }
+
+      println("Logged from " + fmt(since) + " until " + fmt(until))
     })
   }
 }
@@ -281,6 +358,8 @@ object JiraApp {
     }
   }
 
+  def fmt(date: DateTime) = date.toString("EEE, dd MMM yyyy HH:mm:ss z")
+
   def useClient(conf: Conf, fn: (HttpClient, String) => Unit): Unit = {
     val jiraUrl = {
       val tmp = conf.jiraUrl.apply
@@ -309,6 +388,7 @@ object JiraApp {
   }
 
   def hours(seconds: Long) = "%.2f" format (seconds / 3600.0)
+  def percent(d: Double) = "%.2f" format d
 
   def prettyJson(json: String): String = {
     import net.liftweb.json.Printer.pretty 
@@ -318,7 +398,7 @@ object JiraApp {
 }
 
 
-object Formatters {
+object RestFormatters {
   private val DateFormat = "yyyy-MM-dd"
 
   def fmt(d: DateTime) = d.toString(DateFormat)

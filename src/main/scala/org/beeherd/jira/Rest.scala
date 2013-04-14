@@ -44,10 +44,11 @@ class JiraSearcher(
 
   private val searchResourceUrl = jiraUrlBase + "/search"
 
-  def issues(jql: String, includeSubtasks: Boolean = false): List[Issue] =
-    read[SearchResult](
-      client.get(searchResourceUrl, Map("jql" -> jql)).content.get.toString
-    ).issues
+  def issues(jql: String, includeSubtasks: Boolean = false): List[Issue] = {
+    val jsn = json(client.get(searchResourceUrl, Map("jql" -> jql)))
+    println(JiraApp.prettyJson(jsn))
+    read[SearchResult](jsn).issues
+  }
 }
 
 class JiraIssue(
@@ -57,10 +58,10 @@ class JiraIssue(
 
   private val baseUrl = jiraUrlBase + "/issue"
 
-  def issue(id: String): Issue = 
-    read[Issue](
-      client.get(baseUrl + "/" + id).content.get.toString
-    )
+  def issue(id: String): Issue = {
+    val jsn = json(client.get(baseUrl + "/" + id))
+    read[Issue](jsn)
+  }
 }
 
 /**
@@ -68,11 +69,18 @@ class JiraIssue(
  */
 class JiraWorklog(
   client: HttpClient
+  , jiraUrlBase: String // string?? base URL for jira REST api
 ) extends RestResource {
   import JsonResults.WorkLogResult
 
   def worklogs(issue: Issue): List[WorkLog] =
-    read[WorkLogResult](
-      client.get(issue.url + "/worklog").content.get.toString
-    ).worklogs
+    worklogs_h(issue.url)
+
+  def worklogs(idOrKey: String): List[WorkLog] =
+    worklogs_h(jiraUrlBase + "/issue/" + idOrKey)
+
+  private def worklogs_h(issueUrl: String): List[WorkLog] = {
+    val jsn = json(client.get(issueUrl + "/worklog"))
+    read[WorkLogResult](jsn).worklogs
+  }
 }
