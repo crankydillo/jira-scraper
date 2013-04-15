@@ -10,109 +10,6 @@ import org.joda.time.{
 import org.beeherd.jira.model._
 import org.beeherd.jira.rest._
 
-case class SprintsReport(
-  reports: List[SprintReport]
-)
-
-case class SprintReport(
-  name: String
-  , startDate: DateTime
-  , endDate: DateTime
-  , userWorklogs: Map[String, WorklogSummary]
-)
-
-case class WorklogSummary(
-  totalSeconds: Long
-  , totalStorySeconds: Long
-)
-
-object SprintReporter {
-  val Log = Logger.getLogger(classOf[SprintReporter])
-}
-
-class SprintReporter(
-  urlBase: String
-  , teamsResource: GreenhopperTeams
-  , sprintsResource: GreenhopperSprints
-  , sprintReportResource: GreenhopperSprintReport
-  , worklogRetriever: JiraWorklog
-  , issueRetriever: JiraIssue
-) {
-  import SprintReporter.Log
-  import JiraApp.{
-    fmt, hours
-  }
-
-  def reports(teamName: String): Stream[SprintReport] = {
-    val team = teamsResource.team(teamName)
-
-    team match {
-      case Some(t) =>
-      case _ =>
-        throw new IllegalArgumentException("The team, " + teamName + ", was not found.")
-    }
-
-    val sprints = sprintsResource.sprints(team.get.id)
-
-    sprints.toStream.map { sprint => 
-      try {
-        Some(sprintReport(team.get.id, sprint))
-      } catch {
-        case e: Exception =>
-          Log.error(e)
-          println("There was a problem retrieving the sprint report for " +
-            "sprint " + sprint.id)
-          None
-      }
-    }.flatten
-  }
-
-  def sprintReport(teamId: Long, sprint: Sprint): SprintReport = {
-    val sprintReport = sprintReportResource.sprintReport(teamId, sprint.id)
-
-    val allIssues = 
-      sprintReport
-      .issues
-      .map { i => issueRetriever.issue(i.key) }
-      .flatMap { i => 
-        (i.key, i.issueType) :: i.subtasks.map { s => (s.id, i.issueType.toLowerCase) } 
-      }
-
-    val sprintInterval = 
-      new Interval(sprintReport.startDate.get, sprintReport.endDate.get)
-
-    val logsByUser =
-      allIssues
-      .flatMap { case (id, itype) => 
-        worklogRetriever.worklogs(id).map { l => (id, l, itype) } 
-      }
-      .filter { case (id, wl, itype) => sprintInterval.contains(wl.created) }
-      .groupBy { case (id, wls, itype) => wls.author.name }
-
-    if (Log.isDebugEnabled) {
-      logsByUser
-      .toList
-      .flatMap { _._2 }
-      .sortWith { (a, b) => a._2.created.isBefore(b._2.created) }
-      .foreach { println }
-    }
-
-    val worklogSummaries = 
-      logsByUser
-      .toList
-      .map { case (n, ls) => (n, ls.groupBy { _._3 }) }  // group by issuetype
-      .map { case (n, ls) => 
-        val storySecs = ls.getOrElse("story", Nil).map { _._2.timeSpentSeconds }.sum
-        val totalSecs = ls.flatMap( _._2).map { _._2.timeSpentSeconds }.sum
-        val percentStories = "%.2f" format (storySecs * 100.0 / totalSecs)
-        (n -> WorklogSummary(totalSecs, storySecs))
-      }.toMap
-
-    SprintReport(sprint.name, sprintReport.startDate.get, sprintReport.endDate.get,
-      worklogSummaries)
-  }
-}
-
 class SprintWorklogApp 
 
 /** 
@@ -160,21 +57,29 @@ object SprintWorklogApp {
         val reporter = new SprintReporter(urlBase, teamsResource, 
           sprintsResource, sprintReportResource, worklogRetriever, issueRetriever)
 
-        reporter.reports(teamName).foreach { report =>
-          println(report.name)
-          println("-" * report.name.size)
+        reporter.reports(teamName).foreach { summary =>
+          println(summary.report.name)
+          println("-" * summary.report.name.size)
+
+          val storiesCompleteRatio = summary.report.completedStories.size + "/" + 
+              summary.report.stories.size
 
           tablizer.tablize(
-            List(List("Start:", fmt(report.startDate))) ++
-            List(List("End:", fmt(report.endDate)))
+            List(List("Start:", fmt(summary.report.startDate.get))) ++
+            List(List("End:", fmt(summary.report.endDate.get)))
           ).foreach { r => println(r.mkString) }
 
           println()
 
-          val totals = 
-            report.userWorklogs
-            .toList
-            .sortBy { _._1 }
+          tablizer.tablize(
+            List(List("Story Points:", summary.storyPointRatio + "")) ++
+            List(List("Stories:", summary.storyRatio + "")) ++
+            List(List("Other Issues:", summary.nonStoryRatio + ""))
+          ).foreach { r => println(r.mkString) }
+
+          println()
+
+          val totals = summary.userWorklogs.toList.sortBy { _._1 }
 
           val total = totals.map { _._2.totalSeconds }.sum
           val totalStory = totals.map { _._2.totalStorySeconds }.sum
@@ -207,5 +112,114 @@ object SprintWorklogApp {
           println(e.getMessage)
       }
     })
+  }
+}
+
+case class Fraction(numerator: Long, denominator: Long) {
+  override def toString = numerator + "/" + denominator
+}
+
+case class SprintSummary(
+  report: SprintReport
+  , userWorklogs: Map[String, WorklogSummary]
+) {
+  lazy val storyRatio =
+    Fraction(report.completedStories.size, report.stories.size)
+
+  lazy val nonStoryRatio =
+    Fraction(report.completedNonStories.size, report.nonStories.size)
+
+  lazy val storyPointRatio =
+    Fraction(report.storyPointsCompleted.toLong, report.storyPoints.toLong)
+}
+
+case class WorklogSummary(
+  totalSeconds: Long
+  , totalStorySeconds: Long
+)
+
+object SprintReporter {
+  val Log = Logger.getLogger(classOf[SprintReporter])
+}
+
+class SprintReporter(
+  urlBase: String
+  , teamsResource: GreenhopperTeams
+  , sprintsResource: GreenhopperSprints
+  , sprintReportResource: GreenhopperSprintReport
+  , worklogRetriever: JiraWorklog
+  , issueRetriever: JiraIssue
+) {
+  import SprintReporter.Log
+  import JiraApp.{
+    fmt, hours
+  }
+
+  def reports(teamName: String): Stream[SprintSummary] = {
+    val team = teamsResource.team(teamName)
+
+    team match {
+      case Some(t) =>
+      case _ =>
+        throw new IllegalArgumentException("The team, " + teamName + ", was not found.")
+    }
+
+    val sprints = sprintsResource.sprints(team.get.id)
+
+    sprints.toStream.map { sprint => 
+      try {
+        Some(sprintSummary(team.get.id, sprint))
+      } catch {
+        case e: Exception =>
+          Log.error(e)
+          println("There was a problem retrieving the sprint report for " +
+            "sprint " + sprint.id)
+          None
+      }
+    }.flatten
+  }
+
+  def sprintSummary(teamId: Long, sprint: Sprint): SprintSummary = {
+    val sprintReport = sprintReportResource.sprintReport(teamId, sprint.id)
+
+    val allIssues = 
+      sprintReport
+      .issues
+      .map { i => issueRetriever.issue(i.key) }
+      .flatMap { i => 
+        (i.key, i.issueType) :: i.subtasks.map { s => (s.id, i.issueType.toLowerCase) } 
+      }
+
+    val sprintInterval = 
+      new Interval(sprintReport.startDate.get, sprintReport.endDate.get)
+
+    val logsByUser =
+      allIssues
+      .flatMap { case (id, itype) => 
+        worklogRetriever.worklogs(id).map { l => (id, l, itype) } 
+      }
+      .filter { case (id, wl, itype) => sprintInterval.contains(wl.created) }
+      .groupBy { case (id, wls, itype) => wls.author.name }
+
+    if (Log.isDebugEnabled) {
+      logsByUser
+      .toList
+      .flatMap { _._2 }
+      .sortWith { (a, b) => a._2.created.isBefore(b._2.created) }
+      .foreach { println }
+    }
+
+    val worklogSummaries = 
+      logsByUser
+      .toList
+      .map { case (n, ls) => (n, ls.groupBy { _._3 }) }  // group by issuetype
+      .map { case (n, ls) => 
+        val storySecs = ls.getOrElse("story", Nil).map { _._2.timeSpentSeconds }.sum
+        val totalSecs = ls.flatMap( _._2).map { _._2.timeSpentSeconds }.sum
+        val percentStories = "%.2f" format (storySecs * 100.0 / totalSecs)
+        (n -> WorklogSummary(totalSecs, storySecs))
+      }.toMap
+
+    SprintSummary(sprintReport, worklogSummaries)
   }
 }
