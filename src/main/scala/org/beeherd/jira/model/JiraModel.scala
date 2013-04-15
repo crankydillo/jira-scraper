@@ -13,7 +13,8 @@ case class Issue(
 }
 
 case class Field(
-  description: String
+  summary: String
+  , description: String
   , created: DateTime
   , updated: DateTime
   , labels: List[String]

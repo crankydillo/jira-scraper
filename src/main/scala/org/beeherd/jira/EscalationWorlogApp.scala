@@ -74,10 +74,14 @@ object EscalationWorklogApp {
       val prunedIssues = issuesWithWorkLogs.filter { i => !i.workLog.isEmpty }
 
       val tablizer = new Tablizer("  ");
+      val indent = "    "
 
       prunedIssues.foreach { case IssueWithWorkLog(issue, workLogs) =>
         val title = issue.key
         println(title)
+        println("-" * title.size)
+        println(indent + "Summary: " + issue.fields.summary)
+        println()
 
         // Print user work log 
         val workHours = 
@@ -89,7 +93,7 @@ object EscalationWorklogApp {
           .map { case (name, time) => List(name, hours(time)) }
 
         val rows = tablizer.tablize(workHours, List("Worker", "Hours"))
-        rows.foreach { r => println("    " + r.mkString) }
+        rows.foreach { r => println(indent + r.mkString) }
 
         println()
       }
