@@ -65,15 +65,6 @@ object JiraApp {
       "password"
       , descr = "JIRA user password."
     )
-    val since = opt[String](
-      "since"
-      , descr = "Start date for updated JIRAs before --until value. Format: yyyy-MM-dd"
-    )
-    val until = opt[String](
-      "until"
-      , noshort = true
-      , descr = "End date for updated JIRAs.  Format: yyyy-MM-dd"
-    )
     val passwordPrompt = toggle("pp", descrYes = "Prompt for password.")
 
     mutuallyExclusive(password, passwordPrompt)

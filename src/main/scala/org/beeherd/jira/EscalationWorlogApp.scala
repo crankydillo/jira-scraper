@@ -25,6 +25,15 @@ object EscalationWorklogApp {
       "workers"
       , descr = "The workers for which to gather data."
     )
+    val since = opt[String](
+      "since"
+      , descr = "Start date for updated JIRAs before --until value. Format: yyyy-MM-dd"
+    )
+    val until = opt[String](
+      "until"
+      , noshort = true
+      , descr = "End date for updated JIRAs.  Format: yyyy-MM-dd"
+    )
   }
 
   def main(args: Array[String]): Unit = {

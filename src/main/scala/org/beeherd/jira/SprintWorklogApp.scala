@@ -25,6 +25,10 @@ object SprintWorklogApp {
       "team"
       , required = true
     )
+    val since = opt[String](
+      "since"
+      , descr = "Retrieve sprints that start after this date. Format: yyyy-MM-dd"
+    )
   }
 
   def main(args: Array[String]): Unit = {
@@ -34,13 +38,9 @@ object SprintWorklogApp {
     useClient(conf, (client: HttpClient, jiraUrl: String) => {
       val urlBase = jiraUrl + "/rest/greenhopper/1.0"
 
-      val until = conf.until.get match {
-        case Some(s) => DateTime.parse(s)
-        case _ => new DateTime
-      }
       val since = conf.since.get match {
         case Some(s) => DateTime.parse(s)
-        case _ => until.minusWeeks(2)
+        case _ => new DateTime(0)
       }
 
       val teamsResource = new GreenhopperTeams(client, urlBase)
@@ -57,12 +57,12 @@ object SprintWorklogApp {
         val reporter = new SprintReporter(urlBase, teamsResource, 
           sprintsResource, sprintReportResource, worklogRetriever, issueRetriever)
 
-        reporter.reports(teamName).foreach { summary =>
+        reporter
+        .reports(teamName)
+        .takeWhile { _.report.startDate.get.isAfter(since) }
+        .foreach { summary => 
           println(summary.report.name)
           println("-" * summary.report.name.size)
-
-          val storiesCompleteRatio = summary.report.completedStories.size + "/" + 
-              summary.report.stories.size
 
           tablizer.tablize(
             List(List("Start:", fmt(summary.report.startDate.get))) ++
@@ -164,7 +164,9 @@ class SprintReporter(
         throw new IllegalArgumentException("The team, " + teamName + ", was not found.")
     }
 
-    val sprints = sprintsResource.sprints(team.get.id)
+    // ASSume these come in chronological order; however, we want the
+    // latest first..
+    val sprints = sprintsResource.sprints(team.get.id).reverse
 
     sprints.toStream.map { sprint => 
       try {
