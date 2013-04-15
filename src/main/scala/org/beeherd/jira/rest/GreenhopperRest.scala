@@ -6,6 +6,7 @@ import org.beeherd.client.http.HttpClient
 import net.liftweb.json.Serialization.read
 
 import org.beeherd.jira.model._
+import org.beeherd.jira.JiraApp.prettyJson
 
 object GreenhopperJsonResults {
   case class RapidViewList(views: List[Team])
@@ -52,19 +53,14 @@ class GreenhopperSprints(
 
   private val baseUrl = jiraUrlBase + "/sprints"
 
-  def sprints(teamId: Long): List[Sprint] =
+  def sprints(teamId: Long): List[Sprint] = 
     read[Sprints](json(client.get(baseUrl + "/" + teamId))).sprints
-}
-
-object GreenhopperSprintReport {
-  val Log = Logger.getLogger(classOf[GreenhopperSprintReport])
 }
 
 case class GreenhopperSprintReport(
   client: HttpClient
   , jiraUrlBase: String // string?? base URL for jira REST api
 ) extends RestResource {
-  import GreenhopperSprintReport.Log
   import java.text.SimpleDateFormat
   import net.liftweb.json.DefaultFormats
   import net.liftweb.json.ext.JodaTimeSerializers
@@ -78,9 +74,7 @@ case class GreenhopperSprintReport(
 
   def sprintReport(teamId: Long, sprintId: Long): SprintReport = {
     val params = Map("rapidViewId" -> (teamId + ""), "sprintId" -> (sprintId + ""))
-    val jsonStr = json(client.get(baseUrl, params))
-    Log.debug(org.beeherd.jira.JiraApp.prettyJson(jsonStr))
-    val srResp = read[SprintReportResp](jsonStr)
+    val srResp = read[SprintReportResp](json(client.get(baseUrl, params)))
     val c = srResp.contents
     SprintReport(
       srResp.sprint.id

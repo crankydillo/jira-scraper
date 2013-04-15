@@ -2,6 +2,7 @@ package org.beeherd.jira.rest
 
 import java.text.SimpleDateFormat
 
+import org.apache.log4j.Logger
 import org.joda.time.DateTime
 import org.beeherd.client.http.HttpClient
 import org.beeherd.client.{
@@ -19,7 +20,14 @@ object JsonResults {
   case class WorkLogResult(worklogs: List[WorkLog])
 }
 
+object RestResource {
+  val Log = Logger.getLogger(classOf[RestResource])
+}
+
 trait RestResource {
+  import RestResource.Log
+  import JiraApp.prettyJson
+
   implicit val formats = new DefaultFormats {
     override def dateFormatter = new SimpleDateFormat(
       "yyyy-MM-dd'T'HH:mm:ss.SSSZ")
@@ -30,7 +38,10 @@ trait RestResource {
    */
   def json(resp: Response): String = {
     resp match {
-      case StringResponse(s) => s
+      case StringResponse(str) => 
+        if (Log.isTraceEnabled)
+          Log.trace(prettyJson(str))
+        str
       case _ => throw new RuntimeException("Unexpected HTTP response: " + resp)
     }
   }
@@ -47,11 +58,10 @@ class JiraSearcher(
 
   private val searchResourceUrl = jiraUrlBase + "/search"
 
-  def issues(jql: String, includeSubtasks: Boolean = false): List[Issue] = {
-    val jsn = json(client.get(searchResourceUrl, Map("jql" -> jql)))
-    println(JiraApp.prettyJson(jsn))
-    read[SearchResult](jsn).issues
-  }
+  def issues(jql: String, includeSubtasks: Boolean = false): List[Issue] = 
+    read[SearchResult](
+      json(client.get(searchResourceUrl, Map("jql" -> jql)))
+    ).issues
 }
 
 class JiraIssue(
@@ -61,10 +71,8 @@ class JiraIssue(
 
   private val baseUrl = jiraUrlBase + "/issue"
 
-  def issue(id: String): Issue = {
-    val jsn = json(client.get(baseUrl + "/" + id))
-    read[Issue](jsn)
-  }
+  def issue(id: String): Issue = 
+    read[Issue](json(client.get(baseUrl + "/" + id)))
 }
 
 /**
@@ -82,8 +90,6 @@ class JiraWorklog(
   def worklogs(idOrKey: String): List[WorkLog] =
     worklogs_h(jiraUrlBase + "/issue/" + idOrKey)
 
-  private def worklogs_h(issueUrl: String): List[WorkLog] = {
-    val jsn = json(client.get(issueUrl + "/worklog"))
-    read[WorkLogResult](jsn).worklogs
-  }
+  private def worklogs_h(issueUrl: String): List[WorkLog] = 
+    read[WorkLogResult](json(client.get(issueUrl + "/worklog"))).worklogs
 }
