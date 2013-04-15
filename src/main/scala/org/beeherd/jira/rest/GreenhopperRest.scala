@@ -74,16 +74,18 @@ case class GreenhopperSprintReport(
   def sprintReport(teamId: Long, sprintId: Long): SprintReport = {
     val params = Map("rapidViewId" -> (teamId + ""), "sprintId" -> (sprintId + ""))
     val jsonStr = json(client.get(baseUrl, params))
+    println(org.beeherd.jira.JiraApp.prettyJson(jsonStr))
     val srResp = read[SprintReportResp](jsonStr)
     val c = srResp.contents
-    val issues = c.completedIssues ++ c.incompletedIssues ++ c.puntedIssues
     SprintReport(
       srResp.sprint.id
       , srResp.sprint.name
       , srResp.sprint.startDate
       , srResp.sprint.endDate
       , srResp.sprint.completedDate
-      , issues
+      , c.completedIssues
+      , c.incompletedIssues 
+      , c.puntedIssues
     )
   }
 }

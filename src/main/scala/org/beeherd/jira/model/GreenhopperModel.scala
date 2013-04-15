@@ -11,8 +11,18 @@ case class SprintReport(
   , startDate: Option[DateTime]
   , endDate: Option[DateTime]
   , completedDate: Option[DateTime]
-  , issues: List[SprintReportIssue]
-)
+  , completedIssues: List[SprintReportIssue]
+  , incompletedIssues: List[SprintReportIssue]
+  , puntedIssues: List[SprintReportIssue]
+) {
+  def issues = completedIssues ++ incompletedIssues ++ puntedIssues
 
-case class SprintReportIssue(key: String)
+  def completedStories = 
+    completedIssues.filter { _.typeName.toLowerCase == "story" }
+
+  def incompletedStories = 
+    incompletedIssues.filter { _.typeName.toLowerCase == "story" }
+}
+
+case class SprintReportIssue(key: String, typeName: String)
 
