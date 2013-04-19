@@ -21,6 +21,10 @@ object SprintWorklogApp {
   private val Log = Logger.getLogger(classOf[SprintWorklogApp])
 
   class SprintConf(args: Seq[String]) extends Conf(args) {
+    val config = opt[String](
+      "config"
+      , descr = "Config file that can be used to set command line arguments."
+    )
     val team = opt[String](
       "team"
       , required = true
@@ -35,88 +39,150 @@ object SprintWorklogApp {
     val conf = new SprintConf(args)
     initialize(conf)
 
+    val since = conf.since.get match {
+      case Some(s) => DateTime.parse(s)
+      case _ => new DateTime(0)
+    }
+
+    createReport(conf, conf.team.apply, since)
+  }
+
+  private def createReport(
+    conf: SprintConf
+    , teamName: String
+    , since: DateTime
+  ): Unit = {
     useClient(conf, (client: HttpClient, jiraUrl: String) => {
       val urlBase = jiraUrl + "/rest/greenhopper/1.0"
 
-      val since = conf.since.get match {
-        case Some(s) => DateTime.parse(s)
-        case _ => new DateTime(0)
-      }
-
       val teamsResource = new GreenhopperTeams(client, urlBase)
-      val teamName = conf.team.apply
       val team = teamsResource.team(teamName)
       val sprintsResource = new GreenhopperSprints(client, urlBase)
       val sprintReportResource = new GreenhopperSprintReport(client, urlBase)
       val jiraRestUrl = jiraUrl + "/rest/api/2"
       val worklogRetriever = new JiraWorklog(client, jiraRestUrl)
       val issueRetriever = new JiraIssue(client, jiraRestUrl)
+
       val tablizer = new Tablizer("  ")
 
       try {
         val reporter = new SprintReporter(urlBase, teamsResource, 
           sprintsResource, sprintReportResource, worklogRetriever, issueRetriever)
 
-        reporter
-        .reports(teamName)
-        .takeWhile { _.report.startDate.get.isAfter(since) }
-        .foreach { summary => 
-          println(summary.report.name)
-          println("-" * summary.report.name.size)
-
-          tablizer.tablize(
-            List(List("Start:", fmt(summary.report.startDate.get))) ++
-            List(List("End:", fmt(summary.report.endDate.get)))
-          ).foreach { r => println(r.mkString) }
-
-          println()
-
-          tablizer.tablize(
-            List(List("Story Points:", summary.storyPointRatio + "")) ++
-            List(List("Stories:", summary.storyRatio + "")) ++
-            List(List("Other Issues:", summary.nonStoryRatio + ""))
-          ).foreach { r => println(r.mkString) }
-
-          println()
-
-          val totals = summary.userWorklogs.toList.sortBy { _._1 }
-
-          val total = totals.map { _._2.totalSeconds }.sum
-          val totalStory = totals.map { _._2.totalStorySeconds }.sum
-          val totalPercentStory = "%.2f" format (totalStory * 100.0 / total)
-          val totalStr = hours(total)
-          val totalStoryStr = hours(totalStory)
-          val totalPercentStoryStr = totalPercentStory + ""
-
-          val headers = List("Worker", "Total Hours", "Story Hours", "% Story Work")
-        
-          val dataRows = totals.map { case(n, WorklogSummary(totSecs, storySecs)) => 
-            List(n, hours(totSecs), hours(storySecs), 
-              "%.2f" format (storySecs * 100.0 / totSecs))
+        val reports = 
+          reporter
+          .reports(teamName)
+          .takeWhile { _.report.startDate.get.isAfter(since) }
+          .map { report => 
+            print(report, tablizer)
+            report
           }
 
-          val separatorRow = List(List("------", "-" * totalStr.size, 
-            "-" * totalStoryStr.size, "-" * totalPercentStoryStr.size))
+        println("TOTALS")
+        println("------")
+        println()
 
-          val totalRow = List(List("TOTALS", totalStr, totalStoryStr, totalPercentStoryStr))
+        type SS = SprintSummary
+        def ratio(f: (SS) => Fraction) =
+          reports.foldLeft(Fraction(0, 0)) { (acc, s) => acc + f(s) }
 
-          val rows = tablizer.tablize(dataRows ++ separatorRow ++ totalRow, headers)
+        tablizer.tablize(
+          List(List("Story Points:", ratio((s: SS) => s.storyPointRatio) + "")) ++
+          List(List("Stories:", ratio((s: SS) => s.storyRatio) + "")) ++
+          List(List("Other Issues:", ratio((s: SS) => s.nonStoryRatio) + ""))
+        ).foreach { r => println(r.mkString) }
 
-          rows.foreach { r => println(r.mkString) }
+        println()
 
-          println()
-        }
+        val userWork = 
+          reports
+          .flatMap { _.userWorklogs.toList }
+          .groupBy { _._1 }
+          .map { case (n, wls) => 
+            (n, wls.foldLeft ((0L, 0L)) { case ((totSecs, totStorySecs), (_, wl)) => 
+                (totSecs + wl.totalSeconds, totStorySecs + wl.totalStorySeconds)
+              })
+          }.map { case (n, (totSec, totStorySec)) => 
+            (n, WorklogSummary(totSec, totStorySec))
+          }.toList
+          .sortBy { _._1 }
+
+        print(userWork, tablizer)
+
+        println()
+
       } catch {
         case e: Exception =>
           Log.error(e)
           println(e.getMessage)
       }
     })
+
+  }
+
+  private def print(
+    summary: SprintSummary
+    , tablizer: Tablizer = new Tablizer("  ")
+  ): Unit = {
+    println(summary.report.name)
+    println("-" * summary.report.name.size)
+
+    tablizer.tablize(
+      List(List("Start:", fmt(summary.report.startDate.get))) ++
+      List(List("End:", fmt(summary.report.endDate.get)))
+    ).foreach { r => println(r.mkString) }
+
+    println()
+
+    tablizer.tablize(
+      List(List("Story Points:", summary.storyPointRatio + "")) ++
+      List(List("Stories:", summary.storyRatio + "")) ++
+      List(List("Other Issues:", summary.nonStoryRatio + ""))
+    ).foreach { r => println(r.mkString) }
+
+    println()
+
+    print(summary.userWorklogs.toList, tablizer)
+
+    println()
+  }
+
+  def print(
+    workerStats: List[(String, WorklogSummary)]
+    , tablizer: Tablizer
+  ): Unit = {
+    val total = workerStats.map { _._2.totalSeconds }.sum
+    val totalStory = workerStats.map { _._2.totalStorySeconds }.sum
+    val totalPercentStory = "%.2f" format (totalStory * 100.0 / total)
+    val totalStr = hours(total)
+    val totalStoryStr = hours(totalStory)
+    val totalPercentStoryStr = totalPercentStory + ""
+
+    val headers = List("Worker", "Total Hours", "Story Hours", "% Story Work")
+  
+    val dataRows = workerStats.map { case(n, WorklogSummary(totSecs, storySecs)) => 
+      List(n, hours(totSecs), hours(storySecs), 
+        "%.2f" format (storySecs * 100.0 / totSecs))
+    }
+
+    val separatorRow = List(List("------", "-" * totalStr.size, 
+      "-" * totalStoryStr.size, "-" * totalPercentStoryStr.size))
+
+    val totalRow = List(List("TOTALS", totalStr, totalStoryStr, totalPercentStoryStr))
+
+    val rows = tablizer.tablize(dataRows ++ separatorRow ++ totalRow, headers)
+
+    rows.foreach { r => println(r.mkString) }
+
+
   }
 }
 
-case class Fraction(numerator: Long, denominator: Long) {
-  override def toString = numerator + "/" + denominator
+case class Fraction(numer: Long, denom: Long) { 
+  override def toString = numer + "/" + denom
+
+  def +(f: Fraction) = new Fraction(numer + f.numer, denom + f.denom)
+
 }
 
 case class SprintSummary(
