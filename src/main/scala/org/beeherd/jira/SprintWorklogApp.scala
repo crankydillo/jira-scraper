@@ -21,10 +21,6 @@ object SprintWorklogApp {
   private val Log = Logger.getLogger(classOf[SprintWorklogApp])
 
   class SprintConf(args: Seq[String]) extends Conf(args) {
-    val config = opt[String](
-      "config"
-      , descr = "Config file that can be used to set command line arguments."
-    )
     val team = opt[String](
       "team"
       , required = true
@@ -274,7 +270,7 @@ class SprintReporter(
       .toList
       .flatMap { _._2 }
       .sortWith { (a, b) => a._2.created.isBefore(b._2.created) }
-      .foreach { println }
+      .foreach {l => Log.Debug(l) }
     }
 
     val worklogSummaries = 

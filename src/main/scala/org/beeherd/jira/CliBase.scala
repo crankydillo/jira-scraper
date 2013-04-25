@@ -49,7 +49,8 @@ class JiraApp
 object JiraApp {
   val Log = Logger.getLogger(classOf[JiraApp])
 
-  class Conf(arguments: Seq[String]) extends LazyScallopConf(arguments) {
+  class Conf(arguments: Seq[String]) 
+  extends LazyScallopConf(arguments, true) {
     version("JIRA Scraper 1.0-SNAPSHOT")
     val jiraUrl = opt[String](
       "server"
