@@ -16,27 +16,27 @@
         <include>NOTICE*</include>
       </includes>
     </fileSet>
-    <fileset>
+    <fileSet>
       <directory>${project.basedir}/src/main/scripts</directory>
-      <outputdirectory>bin</outputdirectory>
+      <outputDirectory>bin</outputDirectory>
       <includes>
         <include>*</include>
       </includes>
       <excludes>
         <exclude>*~</exclude>
       </excludes>
-      <filemode>0755</filemode>
-    </fileset>
-    <fileset>
+      <fileMode>0755</fileMode>
+    </fileSet>
+    <fileSet>
       <directory>${project.basedir}/src/main/conf</directory>
-      <outputdirectory>conf</outputdirectory>
+      <outputDirectory>conf</outputDirectory>
       <includes>
         <include>*</include>
       </includes>
       <excludes>
         <exclude>*~</exclude>
       </excludes>
-    </fileset>
+    </fileSet>
     <fileSet>
       <directory>${project.build.directory}/site</directory>
       <outputDirectory>docs</outputDirectory>
