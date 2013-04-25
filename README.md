@@ -9,7 +9,7 @@ escalation-report
 
 This application gives a breakdown of the work logged against JIRA's labeled with 'escalation'.
 
-## Usage
+### Usage
 
 `$ escalation-report --help`
 
@@ -18,6 +18,6 @@ sprint-report
 
 This application gives a breakdown of work logged during Greenhopper sprints.
 
-## Usage
+### Usage
 
 `$ sprint-report --help`
