@@ -1,5 +1,5 @@
 #!/bin/bash
-
-java -Dlog4j.configuration="`dirname $0`/conf/log4j.properties" \
-  -cp "`dirname $0`/../lib/*" \
-  org.beeherd.jira.SprintWorklogApp $@
+java -Dscallop.app.config="`dirname $0`/../conf/greenhopper-app.properties" \
+    -Dlog4j.configuration="`dirname $0`/../conf/log4j.properties" \
+    -cp "`dirname $0`/../lib/*" \
+    org.beeherd.jira.SprintWorklogApp $@
