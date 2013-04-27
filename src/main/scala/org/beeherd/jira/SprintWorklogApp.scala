@@ -74,16 +74,22 @@ object SprintWorklogApp {
             report
           }
 
-        println("TOTALS")
-        println("------")
-        println()
-
         type SS = SprintSummary
         def ratio(f: (SS) => Fraction) =
           reports.foldLeft(Fraction(0, 0)) { (acc, s) => acc + f(s) }
 
+        // I don't understand why the mapping over the stream doesn't
+        // *appear* to finish before we get here.  Anyway, I'll for it's hand.
+        
+        val overallStoryPointRatio = ratio((s: SS) => s.storyPointRatio)
+
+        println()
+        println("OVERALL TOTALS")
+        println("--------------")
+        println()
+
         tablizer.tablize(
-          List(List("Story Points:", ratio((s: SS) => s.storyPointRatio) + "")) ++
+          List(List("Story Points:", overallStoryPointRatio + "")) ++
           List(List("Stories:", ratio((s: SS) => s.storyRatio) + "")) ++
           List(List("Other Issues:", ratio((s: SS) => s.nonStoryRatio) + ""))
         ).foreach { r => println(r.mkString) }
@@ -270,7 +276,7 @@ class SprintReporter(
       .toList
       .flatMap { _._2 }
       .sortWith { (a, b) => a._2.created.isBefore(b._2.created) }
-      .foreach {l => Log.Debug(l) }
+      .foreach {l => Log.debug(l) }
     }
 
     val worklogSummaries = 
