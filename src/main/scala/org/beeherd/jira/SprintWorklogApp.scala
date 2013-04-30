@@ -25,6 +25,10 @@ object SprintWorklogApp {
       "team"
       , required = true
     )
+    val workers = opt[List[String]](
+      "workers"
+      , descr = "The workers for which to gather data."
+    )
     val since = opt[String](
       "since"
       , descr = "Retrieve sprints that start after this date. Format: yyyy-MM-dd"
@@ -40,13 +44,14 @@ object SprintWorklogApp {
       case _ => new DateTime(0)
     }
 
-    createReport(conf, conf.team.apply, since)
+    createReport(conf, conf.team.apply, conf.workers.get, since)
   }
 
   private def createReport(
     conf: SprintConf
     , teamName: String
-    , since: DateTime
+    , workers: Option[List[String]] = None
+    , since: DateTime = new DateTime(0)
   ): Unit = {
     useClient(conf, (client: HttpClient, jiraUrl: String) => {
       val urlBase = jiraUrl + "/rest/greenhopper/1.0"
@@ -67,7 +72,7 @@ object SprintWorklogApp {
 
         val reports = 
           reporter
-          .reports(teamName)
+          .reports(teamName, workers)
           .takeWhile { _.report.startDate.get.isAfter(since) }
           .map { report => 
             print(report, tablizer)
@@ -223,7 +228,10 @@ class SprintReporter(
     fmt, hours
   }
 
-  def reports(teamName: String): Stream[SprintSummary] = {
+  def reports(
+    teamName: String
+    , workers: Option[List[String]] = None
+  ): Stream[SprintSummary] = {
     val team = teamsResource.team(teamName)
 
     team match {
@@ -238,7 +246,7 @@ class SprintReporter(
 
     sprints.toStream.map { sprint => 
       try {
-        Some(sprintSummary(team.get.id, sprint))
+        Some(sprintSummary(team.get.id, sprint, workers))
       } catch {
         case e: Exception =>
           Log.error(e)
@@ -249,7 +257,11 @@ class SprintReporter(
     }.flatten
   }
 
-  def sprintSummary(teamId: Long, sprint: Sprint): SprintSummary = {
+  def sprintSummary(
+    teamId: Long
+    , sprint: Sprint
+    , workers: Option[List[String]] = None
+  ): SprintSummary = {
     val sprintReport = sprintReportResource.sprintReport(teamId, sprint.id)
 
     val allIssues = 
@@ -267,9 +279,10 @@ class SprintReporter(
       allIssues
       .flatMap { case (id, itype) => 
         worklogRetriever.worklogs(id).map { l => (id, l, itype) } 
-      }
-      .filter { case (id, wl, itype) => sprintInterval.contains(wl.created) }
-      .groupBy { case (id, wls, itype) => wls.author.name }
+      }.filter { case (id, wl, itype) => 
+        sprintInterval.contains(wl.created) && 
+          (!workers.isDefined || workers.get.contains(wl.author.name))
+      }.groupBy { case (id, wls, itype) => wls.author.name }
 
     if (Log.isDebugEnabled) {
       logsByUser
