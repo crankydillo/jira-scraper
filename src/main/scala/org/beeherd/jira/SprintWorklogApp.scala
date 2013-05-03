@@ -269,7 +269,8 @@ class SprintReporter(
       .issues
       .map { i => issueRetriever.issue(i.key) }
       .flatMap { i => 
-        (i.key, i.issueType) :: i.subtasks.map { s => (s.id, i.issueType.toLowerCase) } 
+        (i.key, i.issueType.toLowerCase) :: 
+        i.subtasks.map { s => (s.id, i.issueType.toLowerCase) } 
       }
 
     val sprintInterval = 
@@ -280,7 +281,7 @@ class SprintReporter(
       .flatMap { case (id, itype) => 
         worklogRetriever.worklogs(id).map { l => (id, l, itype) } 
       }.filter { case (id, wl, itype) => 
-        sprintInterval.contains(wl.created) && 
+        sprintInterval.contains(wl.started) && 
           (!workers.isDefined || workers.get.contains(wl.author.name))
       }.groupBy { case (id, wls, itype) => wls.author.name }
 
@@ -288,7 +289,7 @@ class SprintReporter(
       logsByUser
       .toList
       .flatMap { _._2 }
-      .sortWith { (a, b) => a._2.created.isBefore(b._2.created) }
+      .sortWith { (a, b) => a._2.started.isBefore(b._2.started) }
       .foreach {l => Log.debug(l) }
     }
 

@@ -90,9 +90,8 @@ object JiraApp {
       case Some(p) => Some(p)
       case _ =>
         if (conf.passwordPrompt.isSupplied) {
-          Some(
-            new String(System.console.readPassword("%s", "Password: "))
-          )
+          val passwd = System.console.readPassword("%s", "Password: ")
+          Some(new String(passwd))
         } else {
           None
         }

@@ -29,6 +29,11 @@ case class Subtask(id: String, self: String ) {
 
 case class IssueType(name: String)
 case class Author(name: String, displayName: String)
-case class WorkLog(author: Author, timeSpentSeconds: Long, created: DateTime)
+case class WorkLog(
+  author: Author
+  , timeSpentSeconds: Long
+  , created: DateTime
+  , started: DateTime
+)
 case class IssueWithWorkLog(issue: Issue, workLog: Map[String, List[WorkLog]])
 case class TimeTracking(timeSpentSeconds: Long, remainingEstimateSeconds: Long)
