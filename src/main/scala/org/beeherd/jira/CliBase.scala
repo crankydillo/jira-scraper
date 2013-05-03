@@ -100,7 +100,7 @@ object JiraApp {
 
   def fmt(date: DateTime) = date.toString("EEE, dd MMM yyyy HH:mm:ss z")
 
-  def useClient(conf: Conf, fn: (HttpClient, String) => Unit): Unit = {
+  def useClient[T](conf: Conf, fn: (HttpClient, String) => T): T = {
     val jiraUrl = {
       val tmp = conf.jiraUrl.apply
       if (tmp.endsWith("/")) tmp.dropRight(1)
@@ -118,10 +118,6 @@ object JiraApp {
 
     try {
       fn(client, jiraUrl)
-    } catch {
-      case e: Exception => 
-        e.printStackTrace
-        Log.error("Exception", e)
     } finally {
       apacheClient.getConnectionManager.shutdown
     }
