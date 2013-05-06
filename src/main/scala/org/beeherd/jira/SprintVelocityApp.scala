@@ -15,7 +15,7 @@ import org.beeherd.jira.rest._
 class SprintVelocityApp 
 
 /** 
- * A CLI that displays how much work was logged on Greenhopper spring JIRAs.
+ * A CLI that displays sprint velocity statistics.
  */
 object SprintVelocityApp {
   import JiraApp._
@@ -24,22 +24,24 @@ object SprintVelocityApp {
 
   class SprintConf(args: Seq[String]) extends Conf(args) {
     version("Sprint Velocity Report 1.0-SNAPSHOT")
-    val team = opt[String](
-      "team"
+    val teams = opt[List[String]](
+      "teams"
       , required = true
-    )
-    val workers = opt[List[String]](
-      "workers"
-      , descr = "The workers for which to gather data."
+      , descr = "Team(s) for which to gather data."
     )
     val since = opt[String](
       "since"
       , descr = "Retrieve sprints that start after this date. Format: yyyy-MM-dd"
     )
+    val last = opt[Int](
+      "last"
+      , descr = "Retrieve the last N sprints."
+    )
     val out = opt[String](
       "out"
       , descr = "Write the results to the specified file."
     )
+    mutuallyExclusive(since, last)
   }
 
   def main(args: Array[String]): Unit = {
@@ -51,45 +53,60 @@ object SprintVelocityApp {
       case _ => new DateTime(0)
     }
 
-    val reports = sprintReports(conf, conf.team.apply, conf.workers.get, since)
+    val last = conf.last.get.getOrElse(Int.MaxValue)
 
-    conf.out.get match {
-      case Some(o) => write(reports, new File(o))
-      case _ => output(reports)
-    }
-  }
-
-  private def sprintReports(
-    conf: SprintConf
-    , teamName: String
-    , workers: Option[List[String]] = None
-    , since: DateTime = new DateTime(0)
-  ): List[SprintReport] = {
     useClient(conf, (client: HttpClient, jiraUrl: String) => {
       val urlBase = jiraUrl + "/rest/greenhopper/1.0"
-
-      val teamsResource = new GreenhopperTeams(client, urlBase)
-      val team = teamsResource.team(teamName)
-      val sprintsResource = new GreenhopperSprints(client, urlBase)
-      val reporter = new GreenhopperSprintReport(client, urlBase)
-
-      val teamId = team.get.id
-
-      val sprints = sprintsResource.sprints(teamId).reverse
-      sprints.toStream
-      .map { sprint => reporter.sprintReport(teamId, sprint.id) }
-      .takeWhile { _.startDate.get.isAfter(since) }
-      .toList
+      conf.teams.get.get.toStream.foreach { team =>
+        output(team, sprintReports(client, urlBase, team, last, since).toList)
+      }
     })
   }
 
-  private def write(reports: List[SprintReport], out: File): Unit = {
+  private def sprintReports(
+    client: HttpClient
+    , urlBase: String
+    , teamName: String
+    , last: Int = Int.MaxValue
+    , since: DateTime = new DateTime(0)
+  ): Stream[SprintReport] = {
+    val teamsResource = new GreenhopperTeams(client, urlBase)
+    val team = teamsResource.team(teamName)
+    val sprintsResource = new GreenhopperSprints(client, urlBase)
+    val reporter = new GreenhopperSprintReport(client, urlBase)
+
+    val teamId = team.get.id
+
+    val completedSprints = 
+      sprintsResource.sprints(teamId).reverse.filter { _.closed }
+
+    completedSprints
+    .toStream
+    .map { sprint => 
+      try {
+        Some(reporter.sprintReport(teamId, sprint.id))
+      } catch {
+        case e: Exception => 
+          Log.error("There was a problem retrieving the " +
+            "sprint, " + sprint.id + ", for teamId.", e)
+          None
+      }
+    }.flatten
+    .take(last)
+    .takeWhile { _.startDate.get.isAfter(since) }
   }
 
-  private def output(reports: List[SprintReport]): Unit = {
-    import grizzled.math.stats._
+  private def write(reports: Map[String, List[SprintReport]], out: File): Unit = {
+  }
+
+  private def output(team: String, reports: List[SprintReport]): Unit = {
+    import grizzled.math.stats
 
     val tablizer = new Tablizer("  ")
+
+    println(team)
+    println("-" * team.size)
+    println()
 
     val headers = List("Sprint Name", "Completed", "Committed")
   
@@ -98,8 +115,7 @@ object SprintVelocityApp {
     }
 
     val longestName = reports.map { _.name }.sort { _.size > _.size }.head
-    val completed = reports.map { _.storyPointsCompleted }
-    val totalCompleted = completed.sum.toString
+    val totalCompleted = reports.map { _.storyPointsCompleted }.sum.toString
     val totalCommitted = reports.map { _.storyPoints }.sum.toString
 
     val separatorRow = List(List("-" * longestName.size, "-" * totalCompleted.size, 
@@ -111,13 +127,30 @@ object SprintVelocityApp {
 
     rows.foreach { r => println(r.mkString) }
 
+    val pointsForStats = 
+      reports
+      .filter { r => r.storyPoints > 0 || r.storyPointsCompleted > 0 }
+      .map { _.storyPointsCompleted }
+
     println()
+
+    val (mean, stdDev, median) = pointsForStats match {
+      case Nil => ("N/A", "N/A", "N/A")
+      case List(points) => (points + "", points + "", points + "")
+      case l => 
+        ("%.2f" format stats.mean(l:_*)
+          , "%.2f" format stats.popStdDev(l:_*)
+          , stats.median(l:_*) + "")
+    }
+
     tablizer.tablize(
       List(
-        List("Mean", "%.2f" format mean(completed:_*))
-        , List("Standard Deviation", "%.2f" format popStdDev(completed:_*))
-        , List("Median", median(completed:_*) + "")
+        List("Mean", mean)
+        , List("Standard Deviation", stdDev)
+        , List("Median", median)
       )
     ).foreach { r => println(r.mkString) }
+
+    println()
   }
 }

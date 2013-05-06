@@ -1,0 +1,20 @@
+#!/bin/bash
+cygwin=false;
+case "`uname`" in
+    CYGWIN*) cygwin=true ;;
+esac
+
+APP_HOME=`dirname $0`/..
+CP=$APP_HOME/lib/*
+LOG4J_CFG=$APP_HOME/conf/log4j.properties
+
+if $cygwin; then
+    CP=`cygpath --windows --path "$CP;"`
+    APP_HOME=`cygpath --windows --path "$APP_HOME"`
+    LOG4J_CFG=file:/`cygpath --windows --path "$LOG4J_CFG"`
+fi
+
+java -Dscallop.app.config=$APP_HOME/conf/velocity-app.properties \
+    -Dlog4j.configuration=$LOG4J_CFG \
+    -classpath $CP \
+    org.beeherd.jira.SprintVelocityApp "$@"
