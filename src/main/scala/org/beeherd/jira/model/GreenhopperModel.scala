@@ -6,7 +6,7 @@ import org.joda.time.DateTime
 // TODO Figure out how to 'skip' things with lift-json
 
 case class Team(id: Long, name: String)
-case class Sprint(id: Long, name: String)
+case class Sprint(id: Long, name: String, closed: Boolean)
 
 object SprintReport {
   val Log = Logger.getLogger(classOf[SprintReport])
