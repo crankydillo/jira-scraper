@@ -17,4 +17,4 @@ fi
 java -Dscallop.app.config=$APP_HOME/conf/greenhopper-app.properties \
     -Dlog4j.configuration=$LOG4J_CFG \
     -classpath $CP \
-    org.beeherd.jira.SprintWorklogApp $@
+    org.beeherd.jira.SprintWorklogApp "$@"

@@ -2,4 +2,4 @@
 java -Dscallop.app.config="`dirname $0`/../conf/escalation-app.properties" \
     -Dlog4j.configuration="`dirname $0`/../conf/log4j.properties" \
     -cp "`dirname $0`/../lib/*" \
-    org.beeherd.jira.EscalationWorklogApp  $@
+    org.beeherd.jira.EscalationWorklogApp "$@"
