@@ -45,7 +45,7 @@ object EscalationWorklogApp {
 
       val until = conf.until.get match {
         case Some(s) => DateTime.parse(s)
-        case _ => new DateTime
+        case _ => new DateTime().plusDays(1)
       }
       val since = conf.since.get match {
         case Some(s) => DateTime.parse(s)
