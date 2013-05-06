@@ -158,10 +158,11 @@ object SprintWorklogApp {
   ): Unit = {
     val total = workerStats.map { _._2.totalSeconds }.sum
     val totalStory = workerStats.map { _._2.totalStorySeconds }.sum
-    val totalPercentStory = "%.2f" format (totalStory * 100.0 / total)
     val totalStr = hours(total)
     val totalStoryStr = hours(totalStory)
-    val totalPercentStoryStr = totalPercentStory + ""
+    val totalPercentStoryStr = 
+      if (total == 0) "N/A"
+      else "%.2f" format (totalStory * 100.0 / total)
 
     val headers = List("Worker", "Total Hours", "Story Hours", "% Story Work")
   
