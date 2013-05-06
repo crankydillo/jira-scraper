@@ -103,7 +103,7 @@ object JiraCostApp {
           println("-" * label.size)
           println()
           val rows = tablizer.tablize(totals, List("Worker", "Hours"))
-          rows.foreach { r => println(r.mkString) }
+          rows.foreach { r => println((" " * 4) + r.mkString) }
 
           println()
         }
@@ -122,4 +122,3 @@ object JiraCostApp {
     })
   }
 }
-
