@@ -18,6 +18,14 @@ object JiraCostApp {
   import JiraApp._
   import RestFormatters.{ fmt => restFmt }
 
+  sealed trait Filter
+  case class LabelFilter(labels: List[String]) {
+    override def toString = labels.mkString(" ")
+  }
+  case class JqlFilter(jql: String) {
+    override def toString = jql
+  }
+
   private val Log = Logger.getLogger(classOf[JiraCostApp])
 
   class JiraCostConf(args: Seq[String]) extends Conf(args) {
@@ -33,6 +41,10 @@ object JiraCostApp {
     val labels = opt[List[String]](
       "labels"
       , descr = "Labels to use for classifiers"
+    )
+    val jqls = opt[List[String]](
+      "jqls"
+      , descr = "JQLs to use for classifiers"
     )
     val showWorkerTotals = opt[Boolean](
       "swt"
@@ -54,26 +66,42 @@ object JiraCostApp {
       case _ => new DateTime(0)
     }
 
-    println("Period: " + fmt(since) + " - " + fmt(until))
-    println()
 
     useClient(conf, (client: HttpClient, jiraUrl: String) => {
       val urlBase = jiraUrl + "/rest/api/2"
+
+      println("Period: " + fmt(since) + " - " + fmt(until))
+      println()
 
       val searcher = new JiraSearcher(client, urlBase)
       val worklogRetriever = new JiraWorklog(client, urlBase)
       val tablizer = new Tablizer("  ");
       val indent = "    "
 
-      val totals = conf.labels.apply.map { label =>
-        val labelFilters = 
-          label.split(" ")
-          .map { _.trim }
-          .map { l => "labels = " + l }
-          .mkString(" and ")
+      val labelFilters = 
+        conf.labels.get match {
+          case Some(ls) => 
+            ls.map { label =>
+              LabelFilter(label.split(" ").map { _.trim }.toList)
+            }
+          case _ => Nil
+        }
+
+      val jqls =
+        conf.jqls.get match {
+          case Some(jqls) => jqls.map { jql => JqlFilter(jql) }
+          case _ => Nil
+        }
+
+      val totals = (labelFilters ++ jqls).map { filter =>
+
+        val filterTxt = filter match {
+          case LabelFilter(ls) => ls.map { l => "labels = " + l }.mkString(" and ")
+          case JqlFilter(jql) => jql
+        }
 
         val issues = searcher.issues(
-          labelFilters + 
+          filterTxt + 
           " and timeSpent > 0 and updatedDate >= " +
           restFmt(since) + " and updatedDate <= " + restFmt(until)
         )
@@ -99,8 +127,9 @@ object JiraCostApp {
         val total = totals.map(_(1).toFloat).sum
 
         if (conf.showWorkerTotals.apply) {
-          println(label)
-          println("-" * label.size)
+          val title = filter.toString
+          println(title)
+          println("-" * title.size)
           println()
           val rows = tablizer.tablize(totals, List("Worker", "Hours"))
           rows.foreach { r => println((" " * 4) + r.mkString) }
@@ -108,16 +137,16 @@ object JiraCostApp {
           println()
         }
 
-        (label, total)
+        (filter, total)
       }
 
       val overallTotal = "%.2f" format (totals.map { _._2 }.sum)
 
       tablizer.tablize(
-        totals.map { case (l, t) => List(l, "%.2f" format t) } ++
+        totals.map { case (l, t) => List(l.toString, "%.2f" format t) } ++
         List(List("-----", "-" * overallTotal.size)) ++
         List(List("TOTAL", overallTotal))
-        , List("Label", "Hours")
+        , List("Label/JQL", "Hours")
       ).foreach { r => println(r.mkString) }
     })
   }

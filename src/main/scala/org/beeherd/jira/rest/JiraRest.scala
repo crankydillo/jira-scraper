@@ -6,7 +6,7 @@ import org.apache.log4j.Logger
 import org.joda.time.DateTime
 import org.beeherd.client.http.HttpClient
 import org.beeherd.client.{
-  Response, StringResponse
+  BadResponse, Response, StringResponse
 }
 import net.liftweb.json.DefaultFormats
 import net.liftweb.json.Serialization.read
@@ -42,6 +42,8 @@ trait RestResource {
         if (Log.isTraceEnabled)
           Log.trace(prettyJson(str))
         str
+      case BadResponse(msg) => throw new RuntimeException(msg + 
+        " If authentication is required, please check your credentials.")
       case _ => throw new RuntimeException("Unexpected HTTP response: " + resp)
     }
   }
