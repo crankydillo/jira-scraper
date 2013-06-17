@@ -28,7 +28,7 @@ case class Subtask(id: String, self: String ) {
 }
 
 case class IssueType(name: String)
-case class Author(name: String, displayName: String)
+case class Author(name: String, displayName: Option[String])
 case class WorkLog(
   author: Author
   , timeSpentSeconds: Long
