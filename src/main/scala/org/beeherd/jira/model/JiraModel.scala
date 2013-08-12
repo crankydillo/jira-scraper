@@ -10,6 +10,7 @@ case class Issue(
   def url = self
   def subtasks = fields.subtasks
   def issueType = fields.issuetype.name
+  def labels = fields.labels
 }
 
 case class Field(
