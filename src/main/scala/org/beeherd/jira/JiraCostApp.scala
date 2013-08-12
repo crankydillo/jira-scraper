@@ -149,7 +149,24 @@ object JiraCostApp {
   }
 }
 
-case class JiraCost(jql: String, time: Long, timeByAuthor: Map[String, Long])
+class JiraCost(jql: String, issues: List[IssueWithWorkLog]) {
+
+  lazy val time: Long = timeByAuthor.map { case (_, time) => time }.sum
+
+  lazy val timeByAuthor: Map[String, Long] = {
+    val prunedIssues = issues.filter { i => !i.workLog.isEmpty }
+
+    val worklogsByAuthor = 
+      prunedIssues.flatMap { _.workLog }
+        .groupBy { case (n, _) => n }
+        .map { case (n, wl) => (n, wl.flatMap { case (_, ls) => ls }) }
+
+    worklogsByAuthor
+      .map { case (n, ls) =>
+        (n, ls.foldLeft (0L) { (sum, l) => sum + l.timeSpentSeconds }) 
+      }
+  }
+}
 
 class JiraAccountant(
   searcher: JiraSearcher
@@ -163,21 +180,6 @@ class JiraAccountant(
       IssueWithWorkLog(issue, worklogs.groupBy(_.author.name))
     }
 
-    val prunedIssues = issuesWithWorkLogs.filter { i => !i.workLog.isEmpty }
-
-    val worklogsByAuthor = 
-      prunedIssues.flatMap { _.workLog }
-        .groupBy { case (n, _) => n }
-        .map { case (n, wl) => (n, wl.flatMap { case (_, ls) => ls }) }
-
-
-    val totalsByAuthor =
-      worklogsByAuthor
-        .map { case (n, ls) =>
-              (n, ls.foldLeft (0L) { (sum, l) => sum + l.timeSpentSeconds }) }
-
-    val total = totalsByAuthor.map { case (_, time) => time }.sum
-
-    JiraCost(jql, total, totalsByAuthor)
+    new JiraCost(jql, issuesWithWorkLogs)
   }
 }
