@@ -4,7 +4,9 @@ import java.text.SimpleDateFormat
 
 import org.apache.log4j.Logger
 import org.joda.time.DateTime
-import org.beeherd.client.http.HttpClient
+import org.beeherd.client.http.{
+  ClientFactory, HttpClient, HttpRequest
+}
 import org.beeherd.client.{
   BadResponse, Response, StringResponse
 }
@@ -22,6 +24,29 @@ object JsonResults {
 
 object RestResource {
   val Log = Logger.getLogger(classOf[RestResource])
+
+  def useClient[T](
+    jiraUrl: String
+    , fn: (HttpClient, String) => T
+    , creds: Option[(String, String)] = None
+  ): T = {
+    val (protocol, server, port, _) = HttpRequest.parseUrl(jiraUrl)
+
+    val apacheClient = creds match {
+      case Some((user, pass)) => 
+        ClientFactory.createClient(server, user, pass, port, true)
+      case _ => ClientFactory.createClient
+    }
+
+    val client = new HttpClient(apacheClient)
+
+    try {
+      fn(client, jiraUrl)
+    } finally {
+      apacheClient.getConnectionManager.shutdown
+    }
+  }
+
 }
 
 trait RestResource {

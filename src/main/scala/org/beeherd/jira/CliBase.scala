@@ -8,6 +8,8 @@ import org.joda.time.DateTime
 import org.rogach.scallop._
 import org.rogach.scallop.exceptions._
 
+import org.beeherd.jira.rest.RestResource
+
 object Tester {
   import org.beeherd.jira.rest._
 
@@ -115,18 +117,11 @@ object JiraApp {
     val (protocol, server, port, _) = HttpRequest.parseUrl(jiraUrl)
     val password = pwd(conf)
 
-    val apacheClient = conf.username.get match {
-      case Some(u) => ClientFactory.createClient(server, u, password.get, port, true)
-      case _ => ClientFactory.createClient
+    val creds = conf.username.get match {
+      case Some(u) => Some(u, password.get)
+      case _ => None
     }
-
-    val client = new HttpClient(apacheClient)
-
-    try {
-      fn(client, jiraUrl)
-    } finally {
-      apacheClient.getConnectionManager.shutdown
-    }
+    RestResource.useClient(jiraUrl, fn, creds)
   }
 
   def hours(seconds: Long) = "%.2f" format (seconds / 3600.0)
