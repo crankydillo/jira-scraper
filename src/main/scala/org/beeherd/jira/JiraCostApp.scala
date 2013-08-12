@@ -10,6 +10,17 @@ import org.beeherd.jira.model._
 
 class JiraCostApp
 
+object App {
+  def main(args: Array[String]): Unit = {
+    JiraCostApp.main(
+      Array(
+        "-s", "https://jira.atlassian.com"
+        , "-l", "ondemand"
+        )
+      )
+  }
+}
+
 /** 
  * A CLI that tries to capture cost (i.e. work) based on
  * classifiers (e.g. labels).
@@ -93,6 +104,8 @@ object JiraCostApp {
           case _ => Nil
         }
 
+      val accountant = new JiraAccountant(searcher, worklogRetriever)
+
       val totals = (labelFilters ++ jqls).map { filter =>
 
         val filterTxt = filter match {
@@ -100,31 +113,15 @@ object JiraCostApp {
           case JqlFilter(jql) => jql
         }
 
-        val issues = searcher.issues(
-          filterTxt + 
-          " and timeSpent > 0 and updatedDate >= " +
+        val jql = filterTxt + " and timeSpent > 0 and updatedDate >= " +
           restFmt(since) + " and updatedDate <= " + restFmt(until)
-        )
 
-        val issuesWithWorkLogs = issues.map { issue => 
-          val worklogs = worklogRetriever.worklogs(issue)
-          IssueWithWorkLog(issue, worklogs.groupBy(_.author.name))
-        }
-
-        val prunedIssues = issuesWithWorkLogs.filter { i => !i.workLog.isEmpty }
+        val cost = accountant.cost(jql)
 
         val totals = 
-          prunedIssues
-          .flatMap { _.workLog }
-          .groupBy { case (n, _) => n }
-          .map { case (n, wl) => (n, wl.flatMap { case (_, ls) => ls }) }
-          .toList
-          .sortBy { case (n, _) => n }
-          .map { case (n, ls) =>
-              (n, ls.foldLeft (0L) { (sum, l) => sum + l.timeSpentSeconds }) }
-          .map { case (name, total) => List(name, hours(total)) }
-
-        val total = totals.map(_(1).toFloat).sum
+          cost.timeByAuthor
+            .toList 
+            .map { case (auth, total) => List(auth, hours(total)) }
 
         if (conf.showWorkerTotals.apply) {
           val title = filter.toString
@@ -137,17 +134,50 @@ object JiraCostApp {
           println()
         }
 
-        (filter, total)
+        (filter, cost.time)
       }
 
-      val overallTotal = "%.2f" format (totals.map { _._2 }.sum)
+      val overallTotal = hours(totals.map { _._2 }.sum)
 
       tablizer.tablize(
-        totals.map { case (l, t) => List(l.toString, "%.2f" format t) } ++
+        totals.map { case (l, t) => List(l.toString, hours(t)) } ++
         List(List("-----", "-" * overallTotal.size)) ++
         List(List("TOTAL", overallTotal))
         , List("Label/JQL", "Hours")
       ).foreach { r => println(r.mkString) }
     })
+  }
+}
+
+case class JiraCost(jql: String, time: Long, timeByAuthor: Map[String, Long])
+
+class JiraAccountant(
+  searcher: JiraSearcher
+  , worklogRetriever: JiraWorklog
+) {
+  def cost(jql: String): JiraCost = {
+    val issues = searcher.issues(jql)
+
+    val issuesWithWorkLogs = issues.map { issue => 
+      val worklogs = worklogRetriever.worklogs(issue)
+      IssueWithWorkLog(issue, worklogs.groupBy(_.author.name))
+    }
+
+    val prunedIssues = issuesWithWorkLogs.filter { i => !i.workLog.isEmpty }
+
+    val worklogsByAuthor = 
+      prunedIssues.flatMap { _.workLog }
+        .groupBy { case (n, _) => n }
+        .map { case (n, wl) => (n, wl.flatMap { case (_, ls) => ls }) }
+
+
+    val totalsByAuthor =
+      worklogsByAuthor
+        .map { case (n, ls) =>
+              (n, ls.foldLeft (0L) { (sum, l) => sum + l.timeSpentSeconds }) }
+
+    val total = totalsByAuthor.map { case (_, time) => time }.sum
+
+    JiraCost(jql, total, totalsByAuthor)
   }
 }
